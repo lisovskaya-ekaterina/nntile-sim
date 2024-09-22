@@ -81,7 +81,29 @@ class Worker:
         A place to develop a new task selection policy from the queue. 
         When the worker finishes completing the current task and is ready to take on a new one.
         '''
-        pass
+        if self.current_task:
+            self.queue.remove(self.current_task)
+            self.current_task.status = STATUS_DONE
+            self.memory.append(self.current_task)
+            self.work_time += self.current_task.task_duration
+        top_flag = True
+        for task in self.queue:
+            flag = True
+            for data in task.depends_on:
+                if data.status != STATUS_DONE or data not in self.memory:
+                    flag = False
+                    break
+            if flag == True:
+                self.current_task = task
+                top_flag = False
+                break
+        if top_flag and len(self.queue) > 0:
+            self.current_task = self.queue[0]
+        for d in self.current_task.depends_on:
+            if d not in self.memory:
+                self.load_data(d)
+        
+        self.update_usless_data(self.current_task.depends_on)
 
 
     def check_busy_space(self):

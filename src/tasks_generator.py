@@ -7,15 +7,16 @@ def remove_spaces_from_list(lst):
 
 def generate_task():
     task_dict = {}
-    with open('src/tasks.rec', 'r') as f:
+    with open('src/80-tasks.rec', 'r') as f:
         lines = f.read()
     
     lines = lines.split('MPIRank: -1')
-    lines.remove('')
+    #lines.remove('')
     for note in lines: 
         note = note.split("\n")
         note = remove_spaces_from_list(note)
         dictinory = dict(subString.split(": ") for subString in note)
+        print(dictinory)
         
         if 'Sizes' not in dictinory.keys() or 'StartTime' not in dictinory.keys():
             task_dict[dictinory['JobId']] = Task(id = dictinory['JobId'],
@@ -33,6 +34,6 @@ def generate_task():
             task_dict[dictinory['JobId']] = Task(id = dictinory['JobId'],
                                                 name = 'NAME',
                                                 task_duration=(float(dictinory['EndTime'])-float(dictinory['StartTime'])) / 1000,
-                                                depends_on=dictinory['DependsOn'].split(' '),
+                                                depends_on=dictinory['DependsOn'].split(' ') if 'DependsOn' in dictinory.keys() else [],
                                                 size=int(size[index_of_w]))
     return task_dict
