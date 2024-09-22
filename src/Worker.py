@@ -85,6 +85,7 @@ class Worker:
         When the worker finishes completing the current task and is ready to take on a new one.
         '''
         if self.current_task:
+            self.text.write(f'{self.current_task.id}\n') 
             self.queue.remove(self.current_task)
             self.current_task.status = STATUS_DONE
             self.memory.append(self.current_task)
