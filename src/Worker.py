@@ -42,7 +42,7 @@ class Worker:
         By default in StarPU scheduling policies
         Evictees data from worker memory that has not been used for the longest time
         '''
-        data = self.memory[-1]
+        data = self.memory[0]
         self.memory.remove(data)
         self.cpu.memory.append(data)
             
