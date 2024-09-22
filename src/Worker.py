@@ -98,7 +98,19 @@ class Worker:
                 top_flag = False
                 break
         if top_flag and len(self.queue) > 0:
-            self.current_task = self.queue[0]
+            for task in self.queue: 
+                if task.status == STATUS_READY: 
+                    self.current_task = task
+                    break 
+                else: 
+                    flag = True
+                    for data in task.depends_on: 
+                        if data.status != STATUS_DONE: 
+                            flag = False
+                            break
+                    if flag == True: 
+                        self.current_task = task
+                        break
         for d in self.current_task.depends_on:
             if d not in self.memory:
                 self.load_data(d)
