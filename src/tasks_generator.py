@@ -18,14 +18,7 @@ def generate_task():
         dictinory = dict(subString.split(": ") for subString in note)
         
         if 'JobId' in dictinory.keys():
-            if 'Sizes' not in dictinory.keys() or 'StartTime' not in dictinory.keys():
-                task_dict[dictinory['JobId']] = Task(id = dictinory['JobId'],
-                                                    name = 'NAME',
-                                                    task_duration = 0,
-                                                    depends_on = [],
-                                                    size = 67108864)
-                task_dict[dictinory['JobId']].status = STATUS_DONE
-            else: 
+            if 'DependsOn' in dictinory.keys() and dictinory['Name'][0] != '_':
                 mode_letters_list = dictinory['Modes'].split()
                 for i in mode_letters_list:
                     if 'W' in i:
@@ -34,6 +27,14 @@ def generate_task():
                 task_dict[dictinory['JobId']] = Task(id = dictinory['JobId'],
                                                     name = 'NAME',
                                                     task_duration=(float(dictinory['EndTime'])-float(dictinory['StartTime'])) / 1000,
-                                                    depends_on=dictinory['DependsOn'].split(' ') if 'DependsOn' in dictinory.keys() else [],
+                                                    depends_on=dictinory['DependsOn'].split(' '),
                                                     size=int(size[index_of_w]))
+            else:
+                task_dict[dictinory['JobId']] = Task(id = dictinory['JobId'],
+                                                    name = 'NAME',
+                                                    task_duration = 0,
+                                                    depends_on = [],
+                                                    size = 67108864)
+                task_dict[dictinory['JobId']].status = STATUS_DONE
+                
     return task_dict

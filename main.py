@@ -21,6 +21,7 @@ pop_task_mode = POP_TASK_DMDASD
 
 
 task_list = generate_task()
+print(len(task_list))
 
 cpu = CPU()
 workers = [Worker(name=0, 
