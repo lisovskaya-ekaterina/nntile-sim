@@ -20,6 +20,8 @@ class Worker:
         self.planned_tasks = []
         self.eviction_mode = eviction_mode
         self.pop_task_mode = pop_task_mode
+        self.text = open('sim_log.txt', mode = 'w')
+        self.text.write('sim_JobID\n')
         
 
     def eviction(self):
@@ -46,6 +48,7 @@ class Worker:
             
     def pop_task_dmdasd(self):
         if self.current_task:
+            self.text.write(f'{self.current_task.id}\n') 
             self.queue.remove(self.current_task)
             self.current_task.status = STATUS_DONE
             self.memory.append(self.current_task)

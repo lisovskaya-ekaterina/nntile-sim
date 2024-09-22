@@ -13,9 +13,9 @@ POP_TASK_DMDASD the pop policy of dmdasd scheduler
 '''
 
 eviction_mode = EVICTION_LRU
-pop_task_mode = POP_TASK_DMDASD
+# pop_task_mode = POP_TASK_DMDASD
 # eviction_mode = EVICTION_NEW_V1
-# pop_task_mode = POP_TASK_NEW_V1
+pop_task_mode = POP_TASK_NEW_V1
 
 
 

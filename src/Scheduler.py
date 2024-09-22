@@ -4,7 +4,8 @@ from .const import *
 
 class Scheduler: 
     def __init__(self):
-        pass
+        self.text = open('real_log.txt', mode = 'w')  
+        self.text.write('real_JobID\n')  
     
     def push_task(self, task, workers, task_list):
         '''
@@ -17,6 +18,7 @@ class Scheduler:
             workers[best_worker].cpu.memory.append(task)
             
         elif len(task.depends_on) > 0:
+            self.text.write(f'{task.id}\n')
             for data_id in task.depends_on:
                 if task_list[data_id] not in workers[best_worker].memory and task_list[data_id].status == STATUS_DONE:
                     if task_list[data_id] not in workers[best_worker].cpu.memory:
