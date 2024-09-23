@@ -35,7 +35,7 @@ class Scheduler:
 
     def push_task_new_v1(self, task, workers, task_list):
         '''
-        Select the best worker and add tasks to the worker queue
+        The same as dmdasd, but without prefetch the data
         '''
         # TODO: choice worker_id
         best_worker = 0

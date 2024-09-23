@@ -9,7 +9,8 @@ from src.tasks_generator import generate_task
 Below: need to select eviction mode and pop task mode
 
 EVICTION_LRU the standard eviction policy in StarPU
-POP_TASK_DMDASD the pop policy of dmdasd scheduler
+POP_TASK_DMDASD the pop policy of dmdasd Scheduler
+PUSH_TASK_DMDASD the push policy of dmdasd Scheduler
 '''
 
 eviction_mode = EVICTION_LRU
@@ -43,5 +44,5 @@ for worker in workers:
         print(f'{max_s-len(worker.queue)} of {max_s} ')
         if len(worker.queue) == 0:
             break
-    print(f'{worker.name} work time : {worker.work_time}')
-    print(f'{worker.name} n_load : {worker.n_load}')
+    print(f'{worker.name} : work time : {worker.work_time}')
+    print(f'{worker.name} : n_load : {worker.n_load}')

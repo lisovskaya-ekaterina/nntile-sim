@@ -10,4 +10,4 @@ class Task:
         self.size = size
         self.unused_time = 0 
 
-###TODO Добавить данные ? Куда ? 
+###TODO Добавить данные ? Куда ?

@@ -47,6 +47,9 @@ class Worker:
         self.cpu.memory.append(data)
             
     def pop_task_dmdasd(self):
+        '''
+        Select the first task from the queue for which all the depends on tasks is done
+        '''
         if self.current_task:
             self.text.write(f'{self.current_task.id}\n') 
             self.queue.remove(self.current_task)
@@ -81,8 +84,8 @@ class Worker:
 
     def pop_task_new_v1(self):
         '''
-        A place to develop a new task selection policy from the queue. 
-        When the worker finishes completing the current task and is ready to take on a new one.
+        Select the first task for which all depends on tasks are already in the worker's memory. 
+        If there is no such task, then select the first task from the queue for which all the depends on tasks is done
         '''
         if self.current_task:
             self.text.write(f'{self.current_task.id}\n') 
