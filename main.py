@@ -16,7 +16,8 @@ eviction_mode = EVICTION_LRU
 # pop_task_mode = POP_TASK_DMDASD
 # eviction_mode = EVICTION_NEW_V1
 pop_task_mode = POP_TASK_NEW_V1
-
+# push_task_mode = PUSH_TASK_DMDASD
+push_task_mode = PUSH_TASK_NEW_V1
 
 
 
@@ -30,7 +31,7 @@ workers = [Worker(name=0,
                   cpu=cpu, 
                   eviction_mode=eviction_mode,
                   pop_task_mode=pop_task_mode)]
-scheduler = Scheduler()
+scheduler = Scheduler(push_task_mode)
 
 scheduler.do_work(task_list, workers)
 
