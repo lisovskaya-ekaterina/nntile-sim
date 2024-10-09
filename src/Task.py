@@ -8,6 +8,4 @@ class Task:
         self.status = STATUS_INIT
         self.depends_on = depends_on
         self.size = size
-        self.unused_time = 0 
-
-###TODO Добавить данные ? Куда ?
+        self.unused_time = 0
