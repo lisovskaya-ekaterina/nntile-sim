@@ -37,11 +37,11 @@ class Worker:
         elif self.eviction_mode == EVICTION_NEW_V1:
             return self.eviction_new_v1()
     
-    def pop_task(self):
+    def pop_task(self, workers):
         if self.pop_task_mode == POP_TASK_DMDASD:
-            return self.pop_task_dmdasd()
+            return self.pop_task_dmdasd(workers)
         elif self.pop_task_mode == POP_TASK_NEW_V1:
-            return self.pop_task_new_v1()
+            return self.pop_task_new_v1(workers)
     
     def eviction_LRU(self):
         '''
@@ -53,13 +53,18 @@ class Worker:
         self.memory.memory.remove(data)
         self.cpu.memory.append(data)
             
-    def pop_task_dmdasd(self):
+    def pop_task_dmdasd(self, workers):
         '''
         Select the first task from the queue for which all the depends on tasks is done
         '''
         if self.current_task:
             self.text.write(f'{self.current_task.id}\n') 
-            self.queue.remove(self.current_task)
+            #перовначально было так
+            # try:
+            #     self.queue.remove(self.current_task)
+            # except:
+            #     print(f'cant remove {self.current_task.id} queue')
+
             self.current_task.status = STATUS_DONE
             self.memory.memory.append(self.current_task)
             self.work_time += self.current_task.task_duration
@@ -76,10 +81,15 @@ class Worker:
                 if flag == True: 
                     self.current_task = task
                     break
+        try:
+            self.queue.remove(self.current_task)
+        except:
+            print(f'cant remove {self.current_task.id} queue')
+        
         ###TODO Check data in other workers and transoction
         for d in self.current_task.depends_on:
             if d not in self.memory.memory:
-                self.load_data(d)
+                self.load_data(d, workers)
         
         self.update_usless_data(self.current_task.depends_on)
     
@@ -90,7 +100,7 @@ class Worker:
         '''
         pass
 
-    def pop_task_new_v1(self):
+    def pop_task_new_v1(self, workers):
         '''
         Select the first task for which all depends on tasks are already in the worker's memory. 
         If there is no such task, then select the first task from the queue for which all the depends on tasks is done
@@ -128,7 +138,7 @@ class Worker:
                         break
         for d in self.current_task.depends_on:
             if d not in self.memory.memory:
-                self.load_data(d)
+                self.load_data(d, workers)
         
         self.update_usless_data(self.current_task.depends_on)
 
@@ -153,7 +163,7 @@ class Worker:
                 task.unused_time = 0
         self.memory.memory = sorted(self.memory.memory, key = lambda x: x.unused_time, reverse = True)
 
-    def load_data(self, data):
+    def load_data(self, data, workers):
         '''
         A function that has as input a data that needs to be loaded into the worker's memory. 
         First, it check whether there is an opportunity to download, and, 
@@ -165,6 +175,11 @@ class Worker:
         while data.size + self.check_busy_space() > self.memory.memory_size:
             self.eviction()
         self.memory.memory.append(data)
-        self.cpu.memory.remove(data)
+        if data in self.cpu.memory:
+            self.cpu.memory.remove(data)
+        else: 
+            for w in workers:
+                if w.name != self.name and data in w.memory.memory: 
+                    w.memory.memory.remove(data)
         self.work_time += data.size / TIME_DELIVERY_DATA
         self.n_load += 1

@@ -31,20 +31,36 @@ workers = [Worker(name=0,
                   memory=[], 
                   cpu=cpu, 
                   eviction_mode=eviction_mode,
+                  pop_task_mode=pop_task_mode), 
+                  Worker(name=1, 
+                  memory_size=GPU_MEMORY_SIZE,
+                  memory=[], 
+                  cpu=cpu, 
+                  eviction_mode=eviction_mode,
+                  pop_task_mode=pop_task_mode),
+                  Worker(name=2, 
+                  memory_size=GPU_MEMORY_SIZE,
+                  memory=[], 
+                  cpu=cpu, 
+                  eviction_mode=eviction_mode,
                   pop_task_mode=pop_task_mode)]
+
 scheduler = Scheduler(push_task_mode)
 
 scheduler.do_work(task_list, workers)
 
 max_s = len(workers[0].queue)
 
-for worker in workers:
-    while True:
-        worker.pop_task()
-        print(f'{max_s-len(worker.queue)} of {max_s} ')
+empty_workers = 0
+while empty_workers != len(workers):
+    for worker in workers:
+        worker.pop_task(workers)
+        # print(f'{max_s-len(worker.queue)} of {max_s} ')
         if len(worker.queue) == 0:
-            break
-    print(f'{worker.name} : work time : {worker.work_time}')
-    print(f'{worker.name} : n_load : {worker.n_load}')
+            empty_workers+=1
+for worker in workers:        
+    print(f'{worker.name} : work time : {worker.work_time} ')
+    print(f'{worker.name} : n_load : {worker.n_load}\n')
     
-print(f"--- {time.time() - start_time} seconds ---")
+    
+print(f"--- {time.time() - start_time} seconds ---")  
