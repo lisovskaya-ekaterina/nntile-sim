@@ -76,6 +76,7 @@ class Worker:
                 if flag == True: 
                     self.current_task = task
                     break
+        ###TODO Check data in other workers and transoction
         for d in self.current_task.depends_on:
             if d not in self.memory.memory:
                 self.load_data(d)

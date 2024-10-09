@@ -20,7 +20,7 @@ pop_task_mode = POP_TASK_DMDASD
 push_task_mode = PUSH_TASK_DMDASD
 # push_task_mode = PUSH_TASK_NEW_V1
 
-
+start_time = time.time()
 
 task_list = generate_task()
 print(len(task_list))
@@ -46,3 +46,5 @@ for worker in workers:
             break
     print(f'{worker.name} : work time : {worker.work_time}')
     print(f'{worker.name} : n_load : {worker.n_load}')
+    
+print(f"--- {time.time() - start_time} seconds ---")

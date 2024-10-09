@@ -1,6 +1,7 @@
 from .Task import Task
 from .Worker import Worker
 from .const import *
+import sys
 
 class Scheduler: 
     def __init__(self, push_task_mode):
@@ -37,8 +38,18 @@ class Scheduler:
         '''
         The same as dmdasd, but without prefetch the data
         '''
-        # TODO: choice worker_id
+        
+        min_time = sys.float_info.max
         best_worker = 0
+        for worker in worker:
+            curr_time = 0
+            for t in worker.queue:
+                curr_time += t.task_duration
+                # TODO: calculate time duration with transactions
+            if curr_time <= min_time: 
+                min_time = curr_time
+                best_worker = worker.name
+                
         
         if (task.status == STATUS_DONE or len(task.depends_on) == 0) and task not in workers[best_worker].memory.memory and task not in workers[best_worker].cpu.memory:
             workers[best_worker].cpu.memory.append(task)
