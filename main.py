@@ -14,11 +14,11 @@ PUSH_TASK_DMDASD the push policy of dmdasd Scheduler
 '''
 
 eviction_mode = EVICTION_LRU
-# pop_task_mode = POP_TASK_DMDASD
+pop_task_mode = POP_TASK_DMDASD
 # eviction_mode = EVICTION_NEW_V1
-pop_task_mode = POP_TASK_NEW_V1
-# push_task_mode = PUSH_TASK_DMDASD
-push_task_mode = PUSH_TASK_NEW_V1
+# pop_task_mode = POP_TASK_NEW_V1
+push_task_mode = PUSH_TASK_DMDASD
+# push_task_mode = PUSH_TASK_NEW_V1
 
 
 

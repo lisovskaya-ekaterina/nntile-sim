@@ -21,13 +21,13 @@ class Scheduler:
         # TODO: choice worker_id
         best_worker = 0
         
-        if (task.status == STATUS_DONE or len(task.depends_on) == 0) and task not in workers[best_worker].memory and task not in workers[best_worker].cpu.memory:
+        if (task.status == STATUS_DONE or len(task.depends_on) == 0) and task not in workers[best_worker].memory.memory and task not in workers[best_worker].cpu.memory:
             workers[best_worker].cpu.memory.append(task)
             
         elif len(task.depends_on) > 0:
             self.text.write(f'{task.id}\n')
             for data_id in task.depends_on:
-                if task_list[data_id] not in workers[best_worker].memory and task_list[data_id].status == STATUS_DONE:
+                if task_list[data_id] not in workers[best_worker].memory.memory and task_list[data_id].status == STATUS_DONE:
                     if task_list[data_id] not in workers[best_worker].cpu.memory:
                         workers[best_worker].cpu.memory.append(task_list[data_id])
                     workers[best_worker].load_data(task_list[data_id])
@@ -40,13 +40,13 @@ class Scheduler:
         # TODO: choice worker_id
         best_worker = 0
         
-        if (task.status == STATUS_DONE or len(task.depends_on) == 0) and task not in workers[best_worker].memory and task not in workers[best_worker].cpu.memory:
+        if (task.status == STATUS_DONE or len(task.depends_on) == 0) and task not in workers[best_worker].memory.memory and task not in workers[best_worker].cpu.memory:
             workers[best_worker].cpu.memory.append(task)
             
         elif len(task.depends_on) > 0:
             self.text.write(f'{task.id}\n')
             for data_id in task.depends_on:
-                if task_list[data_id] not in workers[best_worker].memory and task_list[data_id].status == STATUS_DONE:
+                if task_list[data_id] not in workers[best_worker].memory.memory and task_list[data_id].status == STATUS_DONE:
                     if task_list[data_id] not in workers[best_worker].cpu.memory:
                         workers[best_worker].cpu.memory.append(task_list[data_id])
             workers[best_worker].queue.append(task)
@@ -59,3 +59,4 @@ class Scheduler:
             for item in workers[i].queue:
                 temp = item.depends_on
                 item.depends_on = [task_list[key] for key in temp]
+        print('push task -- done')
