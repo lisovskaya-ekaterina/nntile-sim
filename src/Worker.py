@@ -15,9 +15,7 @@ class WorkerMemory:
         
 class Worker:
     def __init__(self, name : int, memory_size : float, memory: list[Task], cpu : CPU, eviction_mode : str, pop_task_mode : str):
-        # self.memory_size = memory_size
         self.name = name
-        # self.memory = memory
         self.current_task = None
         self.work_time = 0
         self.n_load = 0
@@ -26,9 +24,8 @@ class Worker:
         self.planned_tasks = []
         self.eviction_mode = eviction_mode
         self.pop_task_mode = pop_task_mode
-        self.text = open('sim_log.txt', mode = 'w')
-        self.text.write('sim_JobID\n')
-        
+        #self.text = open('sim_log.txt', mode = 'w')
+        #self.text.write('sim_JobID\n')
         self.memory = WorkerMemory(memory_size, name, memory)
 
     def eviction(self):
@@ -58,19 +55,16 @@ class Worker:
         Select the first task from the queue for which all the depends on tasks is done
         '''
         if self.current_task:
-            self.text.write(f'{self.current_task.id}\n') 
-            #перовначально было так
-            # try:
-            #     self.queue.remove(self.current_task)
-            # except:
-            #     print(f'cant remove {self.current_task.id} queue')
-
+            #self.text.write(f'{self.current_task.id}\n') 
+            self.queue.remove(self.current_task)
             self.current_task.status = STATUS_DONE
             self.memory.memory.append(self.current_task)
             self.work_time += self.current_task.task_duration
+        task_suc_flag = False
         for task in self.queue: 
             if task.status == STATUS_READY: 
                 self.current_task = task
+                task_suc_flag = True
                 break 
             else: 
                 flag = True
@@ -80,13 +74,12 @@ class Worker:
                         break
                 if flag == True: 
                     self.current_task = task
+                    task_suc_flag = True
                     break
-        try:
-            self.queue.remove(self.current_task)
-        except:
-            print(f'cant remove {self.current_task.id} queue')
+        if task_suc_flag == False:
+            self.current_task = None
+            return
         
-        ###TODO Check data in other workers and transoction
         for d in self.current_task.depends_on:
             if d not in self.memory.memory:
                 self.load_data(d, workers)
@@ -106,11 +99,12 @@ class Worker:
         If there is no such task, then select the first task from the queue for which all the depends on tasks is done
         '''
         if self.current_task:
-            self.text.write(f'{self.current_task.id}\n') 
+            #self.text.write(f'{self.current_task.id}\n') 
             self.queue.remove(self.current_task)
             self.current_task.status = STATUS_DONE
             self.memory.memory.append(self.current_task)
             self.work_time += self.current_task.task_duration
+        task_suc_flag = False
         top_flag = True
         for task in self.queue:
             flag = True
@@ -120,12 +114,14 @@ class Worker:
                     break
             if flag == True:
                 self.current_task = task
+                task_suc_flag = True
                 top_flag = False
                 break
         if top_flag and len(self.queue) > 0:
             for task in self.queue: 
                 if task.status == STATUS_READY: 
                     self.current_task = task
+                    task_suc_flag = True
                     break 
                 else: 
                     flag = True
@@ -135,7 +131,12 @@ class Worker:
                             break
                     if flag == True: 
                         self.current_task = task
+                        task_suc_flag = True
                         break
+        if task_suc_flag == False:
+            self.current_task = None
+            return
+        
         for d in self.current_task.depends_on:
             if d not in self.memory.memory:
                 self.load_data(d, workers)
