@@ -109,7 +109,7 @@ class Worker:
         for task in self.queue:
             flag = True
             for data in task.depends_on:
-                if data.status != STATUS_DONE or data not in self.memory:
+                if data.status != STATUS_DONE or data not in self.memory.memory:
                     flag = False
                     break
             if flag == True:
