@@ -5,19 +5,19 @@ from .const import *
 def remove_spaces_from_list(lst):
     return [value for value in lst if value != '']
 
-def generate_task():
+def generate_task(logs_file_name):
     task_dict = {}
-    with open('examples/80-tasks.rec', 'r') as f:
+    with open('examples/'+logs_file_name, 'r') as f:
         lines = f.read()
     
     lines = lines.split('MPIRank: -1')
-    for note in lines: 
+    for note in lines:
         note = note.split("\n")
         note = remove_spaces_from_list(note)
         dictinory = dict(subString.split(": ") for subString in note)
+        print(dictinory)
         
-        if 'JobId' in dictinory.keys():
-            if 'DependsOn' in dictinory.keys() and dictinory['Name'][0] != '_':
+        if 'Iteration' in dictinory.keys() and dictinory['Name'][0] != '_':
                 mode_letters_list = dictinory['Modes'].split()
                 for i in mode_letters_list:
                     if 'W' in i:
@@ -28,7 +28,7 @@ def generate_task():
                                                     task_duration=(float(dictinory['EndTime'])-float(dictinory['StartTime'])) / 1000,
                                                     depends_on=dictinory['DependsOn'].split(' '),
                                                     size=int(size[index_of_w]))
-            else:
+        else:
                 task_dict[dictinory['JobId']] = Task(id = dictinory['JobId'],
                                                     name = 'NAME',
                                                     task_duration = 0,

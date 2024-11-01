@@ -1,4 +1,5 @@
+from dataclasses import dataclass, field
 
+@dataclass
 class CPU: 
-    def __init__(self): 
-        self.memory = []
+    memory : list = field(default_factory=list)
