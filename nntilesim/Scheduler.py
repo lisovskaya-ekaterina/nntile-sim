@@ -13,6 +13,8 @@ class Scheduler:
             return self.push_task_dmdasd(task, workers, data_list)
         elif self.push_task_mode == PUSH_TASK_NEW_V1:
             return self.push_task_new_v1(task, workers, data_list)
+        elif self.push_task_mode == PUSH_TASK_RANDOM:
+            return self.push_task_random(task, workers, data_list)
         
     def push_task_dmdasd(self, task, workers, data_list):
         '''
@@ -34,6 +36,19 @@ class Scheduler:
         '''
         
         best_worker = self.calculate_worker(workers, task)
+
+        for data_id in task.depends_on:
+            if data_id in data_list.keys() and data_list[data_id].status == STATUS_INIT:
+                workers[best_worker].cpu.memory.append(data_list[data_id])
+                data_list[data_id].status = STATUS_DONE
+        workers[best_worker].queue.append(task)
+
+    def push_task_random(self, task, workers, data_list):
+        '''
+        The same as dmdasd, but without prefetch the data
+        '''
+        
+        best_worker = task.best_worker
 
         for data_id in task.depends_on:
             if data_id in data_list.keys() and data_list[data_id].status == STATUS_INIT:
