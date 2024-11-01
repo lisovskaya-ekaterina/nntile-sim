@@ -63,10 +63,10 @@ class Scheduler:
 
         data_task_list= {**task_list, **data_list}
 
-        for i in range(len(workers)):
-            for item in workers[i].queue:
-                temp = item.depends_on
-                item.depends_on = [data_task_list[key] for key in temp]
+        for worker in workers:
+            for item in worker.queue:
+                item.depends_on = [data_task_list[d_id] for d_id in item.depends_on if d_id in data_task_list]
+
         print(f'{time.time() - start_time} seconds\npush task -- done.')
         print('-'*10)
 

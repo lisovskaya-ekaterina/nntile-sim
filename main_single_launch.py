@@ -7,7 +7,6 @@ import time
 import argparse
 from nntilesim.tasks_generator import generate_task
 
-
 def main(eviction_mode, pop_task_mode, push_task_mode, gpu_memory_size, n_workers, logs_file_name, i_epoch, i_batch):
     print('Configs:')
     print(f"eviction_mode: {eviction_mode}")
@@ -21,7 +20,7 @@ def main(eviction_mode, pop_task_mode, push_task_mode, gpu_memory_size, n_worker
 
     start_time = time.time()
 
-    task_list, data_list = generate_task(logs_file_name, i_batch, i_epoch)
+    task_list, data_list = generate_task(logs_file_name, i_epoch, i_batch)
 
     cpu = CPU()
     workers = [Worker(name=i, 
