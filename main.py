@@ -37,8 +37,8 @@ def main(eviction_mode, pop_task_mode, push_task_mode, gpu_memory_size, n_worker
     scheduler.do_work(task_list, data_list, workers)
 
     empty_workers = 0
-    for n in range(n_workers):
-        print(f'{n} : {len(workers[n].queue)} tasks')
+    for worker in workers:
+        print(f'{worker.name} : {len(worker.queue)} tasks')
     while empty_workers != len(workers):
         for worker in workers:
             worker.pop_task(workers)
@@ -46,8 +46,7 @@ def main(eviction_mode, pop_task_mode, push_task_mode, gpu_memory_size, n_worker
                 empty_workers += 1
     for worker in workers:        
         print(f'{worker.name} : work time : {worker.work_time} ')
-        print(f'{worker.name} : n_load : {worker.n_load}\n')
-        
+        print(f'{worker.name} : n_load : {worker.n_load}')
         
     print(f"{time.time() - start_time} seconds")
     print('pop task -- done')

@@ -42,7 +42,7 @@ def generate_task(logs_file_name, i_epoch, i_batch):
                                                  name = 'DATA',
                                                  task_duration = 0,
                                                  depends_on = [],
-                                                 size = 0,
+                                                 size = 65536,
                                                  status = STATUS_INIT)
     print(f'{n} tasks')
     print('generate task -- done. ')
