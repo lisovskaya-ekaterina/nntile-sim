@@ -1,17 +1,17 @@
 - `main.py`:
   - Set the "name" of the algorithm in the variables `..._mode` for: the policy of data eviction from GPU memory, the policy of push a task to the worker, the policy of pop a task from the worker's queue.
   - Define a set of workers in the `workers` variable.
-- `src/const.py`:
+- `nntilesim/const.py`:
   - A place for any constants, including the "names" of modes for various policies.
-- `src/Scheduler.py`:
+- `nntilesim/Scheduler.py`:
   - It is possible to define a new policy (as a new function) for **selecting a best worker** and **determining a place in the worker's queue**.
   - In `push_task` function, add a switch for the algorithm if a new one is being created.
-- `src/Worker.py`:
+- `nntilesim/Worker.py`:
   - It is possible to define a new policy (as a new function) for **selecting a task from worker's queue** and for **eviction policy**.
   - In `pop_task` and `eviction` functions, add a switch for the algorithm if a new one is being created.
-- `src/task_generator.py`:
+- `nntilesim/task_generator.py`:
   - Сonverts the traces of real calculations into data for the simulator.
-- `src/Task.py`:
+- `nntilesim/Task.py`:
   - Just a task data.
-- `src/CPU.py`:
+- `nntilesim/CPU.py`:
   - Just a unlimited memory of CPU.
