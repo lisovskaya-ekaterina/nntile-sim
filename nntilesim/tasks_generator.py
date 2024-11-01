@@ -7,11 +7,10 @@ def remove_spaces_from_list(lst):
 
 def generate_task():
     task_dict = {}
-    with open('src/80-tasks.rec', 'r') as f:
+    with open('examples/80-tasks.rec', 'r') as f:
         lines = f.read()
     
     lines = lines.split('MPIRank: -1')
-    # lines.remove('')
     for note in lines: 
         note = note.split("\n")
         note = remove_spaces_from_list(note)

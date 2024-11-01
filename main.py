@@ -1,9 +1,9 @@
-from src.Worker import Worker
-from src.Scheduler import Scheduler
-from src.CPU import CPU
-from src.const import *
+from nntilesim.Worker import Worker
+from nntilesim.Scheduler import Scheduler
+from nntilesim.CPU import CPU
+from nntilesim.const import *
 import time 
-from src.tasks_generator import generate_task
+from nntilesim.tasks_generator import generate_task
 
 ''' 
 Below: need to select eviction mode and pop task mode

@@ -1,13 +1,11 @@
-from .Task import Task
-from .Worker import Worker
+#from .Task import Task
+#from .Worker import Worker
 from .const import *
 import sys
 import time
 
 class Scheduler: 
     def __init__(self, push_task_mode):
-        #self.text = open('real_log.txt', mode = 'w')  
-        #self.text.write('real_JobID\n')
         self.push_task_mode = push_task_mode
     
     def push_task(self, task, workers, task_list):
@@ -34,7 +32,6 @@ class Scheduler:
 
             best_worker = self.calculate_worker(workers, task)
 
-            #self.text.write(f'{task.id}\n')
             for data_id in task.depends_on:
                 if task_list[data_id] not in workers[best_worker].memory.memory and task_list[data_id].status == STATUS_DONE:
                     if task_list[data_id] not in workers[best_worker].cpu.memory:
@@ -60,7 +57,6 @@ class Scheduler:
             
             best_worker = self.calculate_worker(workers, task)
 
-            #self.text.write(f'{task.id}\n')
             for data_id in task.depends_on:
                 if task_list[data_id] not in workers[best_worker].memory.memory and task_list[data_id].status == STATUS_DONE:
                     if task_list[data_id] not in workers[best_worker].cpu.memory:

@@ -1,5 +1,4 @@
 from .const import *
-from random import randint
 class Task: 
     def __init__(self, id, name, task_duration : float, depends_on: list, size):
         self.id = id

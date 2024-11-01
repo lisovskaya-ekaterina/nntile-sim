@@ -1,10 +1,8 @@
 from .Task import Task
 from .CPU import CPU
 from .const import *
-import random
+#import random
 import sys
-
-
 sys.setrecursionlimit(3000000)
 
 class WorkerMemory: 
@@ -24,8 +22,6 @@ class Worker:
         self.planned_tasks = []
         self.eviction_mode = eviction_mode
         self.pop_task_mode = pop_task_mode
-        #self.text = open('sim_log.txt', mode = 'w')
-        #self.text.write('sim_JobID\n')
         self.memory = WorkerMemory(memory_size, name, memory)
 
     def eviction(self):
@@ -55,7 +51,6 @@ class Worker:
         Select the first task from the queue for which all the depends on tasks is done
         '''
         if self.current_task:
-            #self.text.write(f'{self.current_task.id}\n') 
             self.queue.remove(self.current_task)
             self.current_task.status = STATUS_DONE
             self.memory.memory.append(self.current_task)
@@ -99,7 +94,6 @@ class Worker:
         If there is no such task, then select the first task from the queue for which all the depends on tasks is done
         '''
         if self.current_task:
-            #self.text.write(f'{self.current_task.id}\n') 
             self.queue.remove(self.current_task)
             self.current_task.status = STATUS_DONE
             self.memory.memory.append(self.current_task)
