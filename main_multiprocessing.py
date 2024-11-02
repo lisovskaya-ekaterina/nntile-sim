@@ -61,5 +61,4 @@ process_modes = [
 
 if __name__ == "__main__":
     with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
-        # Используем starmap для передачи списка аргументов в функцию
         pool.starmap(process_task, process_modes)
