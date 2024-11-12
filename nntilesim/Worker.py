@@ -50,31 +50,22 @@ class Worker:
         '''
         Select the first task from the queue for which all the depends on tasks is done
         '''
+
         if self.current_task:
             self.queue.remove(self.current_task)
             self.current_task.status = STATUS_DONE
             self.memory.memory.append(self.current_task)
             self.work_time += self.current_task.task_duration
-        task_suc_flag = False
-        for task in self.queue: 
-            if task.status == STATUS_READY: 
-                self.current_task = task
-                task_suc_flag = True
-                break 
-            else: 
-                flag = True
-                for data in task.depends_on: 
-                    if data.status != STATUS_DONE: 
-                        flag = False
-                        break
-                if flag == True: 
-                    self.current_task = task
-                    task_suc_flag = True
-                    break
-        if task_suc_flag == False:
-            self.current_task = None
-            return
+
+        def can_execute(task):
+            return all(data.status == STATUS_DONE for data in task.depends_on)
         
+        self.current_task = next((task for task in self.queue 
+                                  if task.status == STATUS_READY or can_execute(task)), None)
+
+        if not self.current_task:
+            return
+
         for d in self.current_task.depends_on:
             if d not in self.memory.memory:
                 self.load_data(d, workers)
@@ -98,45 +89,29 @@ class Worker:
             self.current_task.status = STATUS_DONE
             self.memory.memory.append(self.current_task)
             self.work_time += self.current_task.task_duration
-        task_suc_flag = False
-        top_flag = True
-        for task in self.queue:
-            flag = True
-            for data in task.depends_on:
-                if data.status != STATUS_DONE or data not in self.memory.memory:
-                    flag = False
-                    break
-            if flag == True:
-                self.current_task = task
-                task_suc_flag = True
-                top_flag = False
-                break
-        if top_flag and len(self.queue) > 0:
-            for task in self.queue: 
-                if task.status == STATUS_READY: 
-                    self.current_task = task
-                    task_suc_flag = True
-                    break 
-                else: 
-                    flag = True
-                    for data in task.depends_on: 
-                        if data.status != STATUS_DONE: 
-                            flag = False
-                            break
-                    if flag == True: 
-                        self.current_task = task
-                        task_suc_flag = True
-                        break
-        if task_suc_flag == False:
-            self.current_task = None
-            return
+
+        done_data = set(task.id for task in self.memory.memory)
         
+        def can_execute_in_mem(task):
+            return all(data.status == STATUS_DONE and data.id in done_data for data in task.depends_on)
+
+        self.current_task = next((task for task in self.queue if can_execute_in_mem(task)), None)
+
+        def can_execute(task):
+            return all(data.status == STATUS_DONE for data in task.depends_on)
+        
+        if not self.current_task:
+            self.current_task = next((task for task in self.queue 
+                                    if task.status == STATUS_READY or can_execute(task)), None)
+
+        if not self.current_task:
+            return
+
         for d in self.current_task.depends_on:
             if d not in self.memory.memory:
                 self.load_data(d, workers)
         
         self.update_usless_data(self.current_task.depends_on)
-
 
     def check_busy_space(self):
         '''
