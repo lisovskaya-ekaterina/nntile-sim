@@ -59,7 +59,6 @@ class Scheduler:
     def do_work(self, task_list, data_list, workers):
         start_time = time.time()
         for task in task_list.values():
-            #print(f"pushing task: {task}")
             self.push_task(task, workers, data_list)
 
         data_task_list= {**task_list, **data_list}
