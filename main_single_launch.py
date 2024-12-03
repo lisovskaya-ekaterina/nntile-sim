@@ -6,8 +6,9 @@ from nntilesim.random_sched import random_sched
 import time 
 import argparse
 from nntilesim.tasks_generator import generate_task
+from nntilesim.tasks_generator_old import generate_task_old
 
-def main(eviction_mode, pop_task_mode, push_task_mode, gpu_memory_size, n_workers, logs_file_name, i_epoch, i_batch):
+def main(eviction_mode, pop_task_mode, push_task_mode, gpu_memory_size, n_workers, logs_file_name, i_epoch, i_batch, task_generator_mode):
     print('Configs:')
     print(f"eviction_mode: {eviction_mode}")
     print(f"pop_task_mode: {pop_task_mode}")
@@ -20,7 +21,10 @@ def main(eviction_mode, pop_task_mode, push_task_mode, gpu_memory_size, n_worker
 
     start_time = time.time()
 
-    task_list, data_list = generate_task(logs_file_name, i_epoch, i_batch)
+    if task_generator_mode == 'new':
+        task_list, data_list = generate_task(logs_file_name, i_epoch, i_batch)
+    elif task_generator_mode == 'old':
+        task_list, data_list = generate_task_old(logs_file_name)
 
     cpu = CPU()
     workers = [Worker(name=i, 
@@ -63,7 +67,8 @@ if __name__ == "__main__":
     parser.add_argument("--n_workers", type=int, default=N_WORKERS, help="Number of workers (GPU)")
     parser.add_argument("--logs_file_name", type=str, default='tasks-2.rec', help="Name of file with logs: *.rec") 
     parser.add_argument("--i_epoch", type=int, default=0, help="Number of epoch for simulation") 
-    parser.add_argument("--i_batch", type=int, default=0, help="Number of batch for simulation")  
+    parser.add_argument("--i_batch", type=int, default=0, help="Number of batch for simulation") 
+    parser.add_argument("--task_generator_mode", type=str, default='new', help="new -- for new developments, old -- for the old version of nntile") 
 
     args = parser.parse_args()
     
@@ -75,5 +80,6 @@ if __name__ == "__main__":
         args.n_workers,
         args.logs_file_name,
         args.i_epoch,
-        args.i_batch
+        args.i_batch,
+        args.task_generator_mode
         )
