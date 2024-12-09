@@ -42,15 +42,16 @@ def main(eviction_mode, pop_task_mode, push_task_mode, gpu_memory_size, n_worker
 
     scheduler.do_work(task_list, data_list, workers)
 
-    empty_workers = 0
+    all_tasks_completed = False
     for worker in workers:
         print(f'{worker.name} : {len(worker.queue)} tasks')
-    while empty_workers != len(workers):
+    while not all_tasks_completed:
         for worker in workers:
             worker.pop_task(workers)
-            if len(worker.queue) == 0:
-                empty_workers += 1
-    for worker in workers:        
+            if all(len(worker.queue) == 0 for worker in workers):
+                all_tasks_completed = True
+                break
+    for worker in workers:
         print(f'{worker.name} : work time : {worker.work_time} ')
         print(f'{worker.name} : n_load : {worker.n_load}')
         
