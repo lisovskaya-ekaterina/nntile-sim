@@ -3,6 +3,7 @@
 from .const import *
 import sys
 import time
+from operator import attrgetter
 
 class Scheduler: 
     def __init__(self, push_task_mode):
@@ -15,6 +16,26 @@ class Scheduler:
             return self.push_task_new_v1(task, workers, data_list)
         elif self.push_task_mode == PUSH_TASK_RANDOM:
             return self.push_task_random(task, workers, data_list)
+        elif self.push_task_mode == PUSH_TEST:
+            return self.push_task_test(task, workers, data_list)
+        
+    def push_task_test(self, task, workers, data_list):
+        
+        best_worker = self.calculate_worker(workers, task)
+
+        for data_id in task.depends_on:
+            if data_id in data_list.keys() and data_list[data_id].status == STATUS_INIT:
+                workers[best_worker].cpu.memory.append(data_list[data_id])
+                workers[best_worker].load_data(data_list[data_id], workers)
+                data_list[data_id].status = STATUS_DONE
+        
+        if len(workers[best_worker].queue) == 0:
+            workers[best_worker].queue.append(task)
+        else: 
+            for i in range(len(workers[best_worker].queue)):
+                if task.param >= workers[best_worker].queue[i].param:
+                    workers[best_worker].queue.insert(i, task)
+                    break 
         
     def push_task_dmdasd(self, task, workers, data_list):
         '''

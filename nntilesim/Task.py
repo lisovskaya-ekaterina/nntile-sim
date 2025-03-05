@@ -14,3 +14,4 @@ class Task:
     depends_on: List['Task'] = field(default_factory=list)
     status: str = STATUS_INIT
     unused_time: int = 0
+    param: int = 0
