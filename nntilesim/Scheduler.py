@@ -21,8 +21,9 @@ class Scheduler:
         
     def push_task_test(self, task, workers, data_list):
         
+        
         best_worker = self.calculate_worker(workers, task)
-
+    
         for data_id in task.depends_on:
             if data_id in data_list.keys() and data_list[data_id].status == STATUS_INIT:
                 workers[best_worker].cpu.memory.append(data_list[data_id])
@@ -32,10 +33,19 @@ class Scheduler:
         if len(workers[best_worker].queue) == 0:
             workers[best_worker].queue.append(task)
         else: 
+            transition_flag = 0
             for i in range(len(workers[best_worker].queue)):
                 if task.param >= workers[best_worker].queue[i].param:
                     workers[best_worker].queue.insert(i, task)
-                    break 
+                    transition_flag = 1 
+                    break
+            if not transition_flag:
+                workers[best_worker].queue.append(task)
+                    
+        
+        # for i in workers[best_worker].queue:
+        #     print(len(workers[best_worker].queue))
+                    
         
     def push_task_dmdasd(self, task, workers, data_list):
         '''
@@ -79,9 +89,14 @@ class Scheduler:
 
     def do_work(self, task_list, data_list, workers):
         start_time = time.time()
+        # print(f"length of task_list -- {len(task_list)}")
         for task in task_list.values():
+            # print(f"curr task param -- {task.param}")
             self.push_task(task, workers, data_list)
+            # print(f"worker 0 queue length -- {len(workers[0].queue)}")
 
+        for i in workers[0].queue:
+            print(i.param)
         data_task_list= {**task_list, **data_list}
 
         for worker in workers:

@@ -47,7 +47,7 @@ def get_graph (logs_file_name):
                 if dep in JobIDs:
                     G.add_edge(dep, job_id)  # Добавляем ориентированное ребро от зависимой задачи
     
-    print(len(G))
+    # print(len(G))
     
     return G
         
