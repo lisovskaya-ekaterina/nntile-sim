@@ -32,6 +32,8 @@ class Worker:
             return self.eviction_new_v1()
 
     def pop_task(self, workers: List['Worker']) -> None:
+        
+        
         if self.pop_task_mode == POP_TASK_DMDASD:
             return self.pop_task_dmdasd(workers)
         elif self.pop_task_mode == POP_TASK_NEW_V1:
@@ -51,6 +53,7 @@ class Worker:
         '''
         Select the first task from the queue for which all the depends on tasks are done
         '''
+       
         if self.current_task:
             self.queue.remove(self.current_task)
             self.current_task.status = STATUS_DONE

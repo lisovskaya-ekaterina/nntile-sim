@@ -48,6 +48,10 @@ def main(eviction_mode, pop_task_mode, push_task_mode, gpu_memory_size, n_worker
     while not all_tasks_completed:
         for worker in workers:
             worker.pop_task(workers)
+            # try:
+            #     print(f'{worker.current_task} -- {worker.current_task.depends_on} -- {worker.memory.memory}')
+            # except:
+            #     pass 
             if all(len(worker.queue) == 0 for worker in workers):
                 all_tasks_completed = True
                 break

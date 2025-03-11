@@ -42,11 +42,15 @@ class Scheduler:
             if not transition_flag:
                 workers[best_worker].queue.append(task)
                     
-        # for data_id in workers[best_worker].queue[0].depends_on:
-        #     if data_id in data_list.keys() and data_list[data_id].status == STATUS_INIT:
-        #         workers[best_worker].cpu.memory.append(data_list[data_id])
-        #         workers[best_worker].load_data(data_list[data_id], workers)
-        #         data_list[data_id].status = STATUS_DONE
+        for data_id in workers[best_worker].queue[0].depends_on:
+            if data_id in data_list.keys() and data_list[data_id].status == STATUS_INIT:
+                workers[best_worker].cpu.memory.append(data_list[data_id])
+                workers[best_worker].load_data(data_list[data_id], workers)
+                data_list[data_id].status = STATUS_DONE
+                
+        # print(f'first task {workers[best_worker].queue[0].name} -- priority {workers[best_worker].queue[0].param}')
+        # print(workers[best_worker].queue[0].depends_on)
+        # print(len( workers[best_worker].memory.memory))
         # for i in workers[best_worker].queue:
         #     print(len(workers[best_worker].queue))
                     
@@ -100,8 +104,9 @@ class Scheduler:
             # print(f"worker 0 queue length -- {len(workers[0].queue)}")
 
         
+        
         # for i in workers[0].queue:
-        #     print(i.param)
+        #     print(i.id)
         data_task_list= {**task_list, **data_list}
 
         for worker in workers:
