@@ -86,8 +86,9 @@ def generate_task(logs_file_name, i_epoch, i_batch):
                         name=dictionary['Name'],
                         task_duration=(float(dictionary['EndTime']) - float(dictionary['StartTime'])) / 1000,
                         depends_on=dictionary['DependsOn'].split(' '),
-                        size=int(size[index_of_w]), param = len(nx.descendants(G, dictionary['JobId'])))
-                    
+                        size=int(size[index_of_w]), param = len(nx.descendants(G, dictionary['JobId']) ))
+                    #len(nx.descendants(G, dictionary['JobId']) 
+                    # len(list(nx.shortest_path(G, source = dictionary['JobId']))
         elif all(field in dictionary for field in data_fields):
             data_dict[dictionary['JobId']] = Task(
                 id=dictionary['JobId'],

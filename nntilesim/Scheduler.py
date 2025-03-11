@@ -35,14 +35,18 @@ class Scheduler:
         else: 
             transition_flag = 0
             for i in range(len(workers[best_worker].queue)):
-                if task.param >= workers[best_worker].queue[i].param:
+                if task.param > workers[best_worker].queue[i].param:
                     workers[best_worker].queue.insert(i, task)
                     transition_flag = 1 
                     break
             if not transition_flag:
                 workers[best_worker].queue.append(task)
                     
-        
+        # for data_id in workers[best_worker].queue[0].depends_on:
+        #     if data_id in data_list.keys() and data_list[data_id].status == STATUS_INIT:
+        #         workers[best_worker].cpu.memory.append(data_list[data_id])
+        #         workers[best_worker].load_data(data_list[data_id], workers)
+        #         data_list[data_id].status = STATUS_DONE
         # for i in workers[best_worker].queue:
         #     print(len(workers[best_worker].queue))
                     
@@ -95,14 +99,21 @@ class Scheduler:
             self.push_task(task, workers, data_list)
             # print(f"worker 0 queue length -- {len(workers[0].queue)}")
 
-        for i in workers[0].queue:
-            print(i.param)
+        
+        # for i in workers[0].queue:
+        #     print(i.param)
         data_task_list= {**task_list, **data_list}
 
         for worker in workers:
             for item in worker.queue:
                 item.depends_on = [data_task_list[d_id] for d_id in item.depends_on if d_id in data_task_list]
 
+
+        # for w in workers:
+        #     for d in w.queue[0].depends_on:
+        #         if d not in w.memory.memory:
+        #             w.load_data(d, workers)
+                    
         print(f'{time.time() - start_time} seconds\npush task -- done.')
         print('-'*10)
 
