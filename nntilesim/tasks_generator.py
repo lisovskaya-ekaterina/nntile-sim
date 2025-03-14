@@ -55,6 +55,9 @@ def remove_spaces_from_list(lst):
     return [value for value in lst if value != '']
 
 def generate_task(logs_file_name, i_epoch, i_batch):
+    '''
+    TODO get_graph нужно запускать только по требованию, добавить параметр соответствующий
+    '''
     G = get_graph(f'examples/{logs_file_name}')
     task_fields = ['Name', 'DependsOn', 'JobId', 'EndTime', 'StartTime', 'Iteration', 'Modes', 'Sizes']
     data_fields = ['JobId']
@@ -86,7 +89,7 @@ def generate_task(logs_file_name, i_epoch, i_batch):
                         name=dictionary['Name'],
                         task_duration=(float(dictionary['EndTime']) - float(dictionary['StartTime'])) / 1000,
                         depends_on=dictionary['DependsOn'].split(' '),
-                        size=int(size[index_of_w]), param = len(nx.descendants(G, dictionary['JobId']) ))
+                        size=int(size[index_of_w]), param = len(list(nx.shortest_path(G, source = dictionary['JobId']))))
                     #len(nx.descendants(G, dictionary['JobId']) 
                     # len(list(nx.shortest_path(G, source = dictionary['JobId']))
         elif all(field in dictionary for field in data_fields):
