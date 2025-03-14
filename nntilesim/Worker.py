@@ -1,7 +1,6 @@
 from .Task import Task
 from .CPU import CPU
 from .const import *
-#import random
 import sys
 sys.setrecursionlimit(3000000)
 
@@ -27,14 +26,12 @@ class Worker:
     def eviction(self):
         if self.eviction_mode == EVICTION_LRU:
             return self.eviction_LRU()
-        elif self.eviction_mode == EVICTION_NEW_V1:
-            return self.eviction_new_v1()
     
-    def pop_task(self, workers):
-        if self.pop_task_mode == POP_TASK_DMDASD:
-            return self.pop_task_dmdasd(workers)
-        elif self.pop_task_mode == POP_TASK_NEW_V1:
-            return self.pop_task_new_v1(workers)
+    def pop_task(self, workers, scheduler):
+        if self.pop_task_mode == POP_TASK_GRAPH_TEST:
+            return self.pop_task_graph_test(workers, scheduler)
+        elif self.pop_task_mode == POP_TASK_NEW_V2:
+            return self.pop_task_new_v2(workers, scheduler)
     
     def eviction_LRU(self):
         '''
@@ -46,13 +43,12 @@ class Worker:
         self.memory.memory.remove(data)
         self.cpu.memory.append(data)
             
-    def pop_task_dmdasd(self, workers):
+    def pop_task_graph_test(self, workers, scheduler):
         '''
         Select the first task from the queue for which all the depends on tasks is done
         '''
-
         if self.current_task:
-            self.queue.remove(self.current_task)
+            scheduler.prio_gpu.remove(self.current_task)
             self.current_task.status = STATUS_DONE
             self.memory.memory.append(self.current_task)
             self.work_time += self.current_task.task_duration
@@ -60,7 +56,7 @@ class Worker:
         def can_execute(task):
             return all(data.status == STATUS_DONE for data in task.depends_on)
         
-        self.current_task = next((task for task in self.queue 
+        self.current_task = next((task for task in scheduler.prio_gpu 
                                   if task.status == STATUS_READY or can_execute(task)), None)
 
         if not self.current_task:
@@ -71,47 +67,9 @@ class Worker:
                 self.load_data(d, workers)
         
         self.update_usless_data(self.current_task.depends_on)
-    
-    def eviction_new_v1(self):
-        '''
-        A place to develop a new policy of eviction from the worker's memory. 
-        When there is not enough space to load any new data.
-        '''
+
+    def pop_task_new_v2(self, workers):
         pass
-
-    def pop_task_new_v1(self, workers):
-        '''
-        Select the first task for which all depends on tasks are already in the worker's memory. 
-        If there is no such task, then select the first task from the queue for which all the depends on tasks is done
-        '''
-        if self.current_task:
-            self.queue.remove(self.current_task)
-            self.current_task.status = STATUS_DONE
-            self.memory.memory.append(self.current_task)
-            self.work_time += self.current_task.task_duration
-
-        done_data = set(task.id for task in self.memory.memory)
-        
-        def can_execute_in_mem(task):
-            return all(data.status == STATUS_DONE and data.id in done_data for data in task.depends_on)
-
-        self.current_task = next((task for task in self.queue if can_execute_in_mem(task)), None)
-
-        def can_execute(task):
-            return all(data.status == STATUS_DONE for data in task.depends_on)
-        
-        if not self.current_task:
-            self.current_task = next((task for task in self.queue 
-                                    if task.status == STATUS_READY or can_execute(task)), None)
-
-        if not self.current_task:
-            return
-
-        for d in self.current_task.depends_on:
-            if d not in self.memory.memory:
-                self.load_data(d, workers)
-        
-        self.update_usless_data(self.current_task.depends_on)
 
     def check_busy_space(self):
         '''

@@ -10,3 +10,6 @@ class Task:
     depends_on : list
     status : str = STATUS_INIT
     unused_time : int = 0
+    i_batch : int = 0
+    i_minibatch : int = 0
+    priority : int = 0
