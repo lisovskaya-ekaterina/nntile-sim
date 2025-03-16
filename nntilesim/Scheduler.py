@@ -45,7 +45,7 @@ class Scheduler:
         else: 
             transition_flag = 0
             for i in range(len(workers[best_worker].queue)):
-                if task.param > workers[best_worker].queue[i].param:
+                if task.param >= workers[best_worker].queue[i].param:
                     workers[best_worker].queue.insert(i, task)
                     transition_flag = 1 
                     break

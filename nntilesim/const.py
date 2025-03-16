@@ -18,4 +18,7 @@ LOG_DIR_PATH = 'logs'
 GPU_MEMORY_SIZE = 85899345920 # 80 gb = 85899345920 byte 60 gb = 64424509440 byte 40 gb = 42949672960 20 gb = 21474836480
 N_WORKERS = 1
 PUSH_TASK_RANDOM = 'random'
-PUSH_TEST = 'push_test'
+PUSH_TEST = 'push_test' #new 
+P1 = 'param1' #new 
+P2 = 'param2' #new 
+

@@ -16,7 +16,9 @@ def get_graph (logs_file_name):
                 if record:  # Если накоплена запись
                     records.append(record)
                     record = {}  # Очищаем для следующей записи
-    
+    '''
+    вызов функции нужен только при выборе флага
+    '''
     my_records = []
     JobIDs = []
     names_list = set()
@@ -54,11 +56,12 @@ def get_graph (logs_file_name):
 def remove_spaces_from_list(lst):
     return [value for value in lst if value != '']
 
-def generate_task(logs_file_name, i_epoch, i_batch):
+def generate_task(logs_file_name, i_epoch, i_batch, push_task_mode, push_task_param):
     '''
     TODO get_graph нужно запускать только по требованию, добавить параметр соответствующий
     '''
-    G = get_graph(f'examples/{logs_file_name}')
+    if push_task_mode == PUSH_TEST:
+        G = get_graph(f'examples/{logs_file_name}')
     task_fields = ['Name', 'DependsOn', 'JobId', 'EndTime', 'StartTime', 'Iteration', 'Modes', 'Sizes']
     data_fields = ['JobId']
 
@@ -83,15 +86,17 @@ def generate_task(logs_file_name, i_epoch, i_batch):
                 mode_letters_list = dictionary['Modes'].split()
                 index_of_w = next((i for i, mode in enumerate(mode_letters_list) if 'W' in mode), None)
                 if index_of_w is not None:
+                    # parameter = len(nx.descendants(G, dictionary['JobId'])) if (push_task_param == P1) else parameter =len(list(nx.shortest_path(G, source = dictionary['JobId'])))if (push_task_param == P2) else parameter = 0
+
                     size = dictionary['Sizes'].split()
                     task_dict[dictionary['JobId']] = Task(
                         id=dictionary['JobId'],
                         name=dictionary['Name'],
                         task_duration=(float(dictionary['EndTime']) - float(dictionary['StartTime'])) / 1000,
                         depends_on=dictionary['DependsOn'].split(' '),
-                        size=int(size[index_of_w]), param = len(list(nx.shortest_path(G, source = dictionary['JobId']))))
-                    #len(nx.descendants(G, dictionary['JobId']) 
-                    # len(list(nx.shortest_path(G, source = dictionary['JobId']))
+                        size=int(size[index_of_w]), param=len(nx.descendants(G, dictionary['JobId'])))
+                    #len(nx.descendants(G, dictionary['JobId'])  число потомков
+                    # len(list(nx.shortest_path(G, source = dictionary['JobId'])) глубина графа
         elif all(field in dictionary for field in data_fields):
             data_dict[dictionary['JobId']] = Task(
                 id=dictionary['JobId'],

@@ -8,7 +8,7 @@ import argparse
 from nntilesim.tasks_generator import generate_task
 from nntilesim.tasks_generator_old import generate_task_old
 
-def main(eviction_mode, pop_task_mode, push_task_mode, gpu_memory_size, n_workers, logs_file_name, i_epoch, i_batch, task_generator_mode):
+def main(eviction_mode, pop_task_mode, push_task_mode, push_task_parameter, gpu_memory_size, n_workers, logs_file_name, i_epoch, i_batch, task_generator_mode):
     print('Configs:')
     print(f"eviction_mode: {eviction_mode}")
     print(f"pop_task_mode: {pop_task_mode}")
@@ -22,7 +22,7 @@ def main(eviction_mode, pop_task_mode, push_task_mode, gpu_memory_size, n_worker
     start_time = time.time()
 
     if task_generator_mode == 'new':
-        task_list, data_list = generate_task(logs_file_name, i_epoch, i_batch)
+        task_list, data_list = generate_task(logs_file_name, i_epoch, i_batch, push_task_mode, push_task_parameter)
     elif task_generator_mode == 'old':
         task_list, data_list = generate_task_old(logs_file_name)
 
@@ -64,6 +64,7 @@ if __name__ == "__main__":
     parser.add_argument("--eviction_mode", type=str, default=EVICTION_LRU, help="Eviction mode: LRU, evict_new_v1")
     parser.add_argument("--pop_task_mode", type=str, default=POP_TASK_DMDASD, help="pop_task mode: dmdasd, pop_new_v1")
     parser.add_argument("--push_task_mode", type=str, default=PUSH_TEST, help="push_task mode: dmdasd, push_new_v1, random")
+    parser.add_argument("--push_task_parameter", type=str, default=P1) # new 
     parser.add_argument("--gpu_memory_size", type=int, default=GPU_MEMORY_SIZE, help="GPU memory size (bytes)") 
     parser.add_argument("--n_workers", type=int, default=N_WORKERS, help="Number of workers (GPU)")
     parser.add_argument("--logs_file_name", type=str, default='tasks-2.rec', help="Name of file with logs: *.rec") 
@@ -77,6 +78,7 @@ if __name__ == "__main__":
         args.eviction_mode,
         args.pop_task_mode,
         args.push_task_mode,
+        args.push_task_parameter,
         args.gpu_memory_size,
         args.n_workers,
         args.logs_file_name,
