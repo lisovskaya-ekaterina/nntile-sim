@@ -58,9 +58,17 @@ def generate_task(logs_file_name, i_batch, graph_test_descendants):
         for job_id in task_dict:
             task_dict[job_id].priority = len(nx.descendants(G, job_id))
     elif graph_test_descendants == 1:
+        depths = dag_depth_bottom_up(G)
+        for job_id in task_dict:
+            task_dict[job_id].priority = depths[job_id]
+    elif graph_test_descendants == 2:
         depths = depth(G)
         for job_id in task_dict:
             task_dict[job_id].priority = depths[job_id]
+    elif graph_test_descendants == 3:
+        n = len(G)
+        for i, node in enumerate(nx.topological_sort(G)):
+            task_dict[node].priority = n - 1 - i
             
     print(f'{n} tasks')
     print('generate task -- done. ')
@@ -85,3 +93,41 @@ def _depth_recursive(graph, node, depths, current_depth):
    for neighbor in graph[node]:
        if neighbor not in depths or depths[neighbor] > current_depth +1: # Проверка для корректной работы с циклами
            _depth_recursive(graph, neighbor, depths, current_depth + 1)
+
+
+def reversed_topological_sort(graph):
+    """
+    Реализует обратную топологическую сортировку для версий NetworkX < 2.8.
+    """
+    return reversed(list(nx.topological_sort(graph)))
+
+def dag_depth_bottom_up(graph):
+    """
+    Вычисляет глубину каждой вершины в DAG (снизу вверх).
+
+    Args:
+        graph: Объект графа networkx (должен быть DAG).
+
+    Returns:
+        Словарь, где ключи - вершины, а значения - их глубины.
+    """
+
+    depths = {}
+
+    # Находим листовые вершины (без исходящих ребер)
+    leaf_nodes = [node for node in graph.nodes() if graph.out_degree(node) == 0]
+
+    # Устанавливаем глубину листовых вершин в 0
+    for node in leaf_nodes:
+        depths[node] = 0
+
+    # Обходим граф снизу вверх
+    for node in reversed_topological_sort(graph):
+        if node not in depths:
+            max_child_depth = 0
+            for successor in graph.successors(node):
+                if successor in depths:
+                    max_child_depth = max(max_child_depth, depths[successor])
+            depths[node] = max_child_depth + 1
+
+    return depths
