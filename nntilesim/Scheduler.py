@@ -27,7 +27,7 @@ class Scheduler:
                 self.push_task(task, cpu, data_list)
             self.prio_gpu = sorted(self.prio_gpu, key = lambda x: x.priority, reverse = True)
 
-        elif self.push_task_mode == PUSH_TASK_NEW_V2:
+        elif self.push_task_mode == PUSH_TASK_MPHASE_MINIBATCH:
             bag_of_tasks = defaultdict(list)
             for task in task_list.values():
                 bag_of_tasks[task.i_minibatch].append(task)

@@ -16,7 +16,7 @@ def main(eviction_mode, pop_task_mode, push_task_mode, gpu_memory_size, n_worker
     print(f"i_batch: {i_batch}")
     if push_task_mode == PUSH_TASK_GRAPH_TEST:
         print(f"graph_test_descendants: {graph_test_descendants}")
-    elif push_task_mode == PUSH_TASK_NEW_V2:
+    elif push_task_mode == PUSH_TASK_MPHASE_MINIBATCH:
         print(f"n_minibatch_hyper: {n_minibatch_hyper}")
     print('-'*10)
 
@@ -58,7 +58,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simulation's config")
     parser.add_argument("--eviction_mode", type=str, default=EVICTION_LRU, help="Eviction mode: LRU, evict_new_v1")
     parser.add_argument("--pop_task_mode", type=str, default=POP_TASK_GRAPH_TEST, help="pop_task mode: graph_test")
-    parser.add_argument("--push_task_mode", type=str, default=PUSH_TASK_GRAPH_TEST, help="push_task mode: graph_test, new_v2")
+    parser.add_argument("--push_task_mode", type=str, default=PUSH_TASK_MPHASE_MINIBATCH, help="push_task mode: graph_test, new_v2")
     parser.add_argument("--gpu_memory_size", type=int, default=GPU_MEMORY_SIZE, help="GPU memory size (bytes)")
     parser.add_argument("--n_workers", type=int, default=N_WORKERS, help="Number of workers (GPU)")
     parser.add_argument("--logs_file_name", type=str, default='iteration_tasks.rec', help="Name of file with logs: *.rec")

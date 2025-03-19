@@ -69,6 +69,9 @@ def generate_task(logs_file_name, i_batch, graph_test_descendants):
         n = len(G)
         for i, node in enumerate(nx.topological_sort(G)):
             task_dict[node].priority = n - 1 - i
+    elif graph_test_descendants == 4:
+        for i, node in enumerate(nx.topological_sort(G)):
+            task_dict[node].priority = i
             
     print(f'{n} tasks')
     print('generate task -- done. ')
