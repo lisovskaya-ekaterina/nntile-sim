@@ -18,6 +18,7 @@ def generate_task(logs_file_name, i_batch, graph_test_descendants):
     
     lines = lines.split('MPIRank: -1')
     n = 0
+    i_minibatch_list = set()
     for note in lines:
         note = note.split("\n")
         note = remove_spaces_from_list(note)
@@ -34,12 +35,14 @@ def generate_task(logs_file_name, i_batch, graph_test_descendants):
                 size = dictinory['Sizes'].split()
                 task_dict[dictinory['JobId']] = Task(id = dictinory['JobId'],
                                                     name = dictinory['Name'],
+                                                    status = STATUS_INIT,
                                                     task_duration = (float(dictinory['EndTime'])-float(dictinory['StartTime'])) / 1000,
                                                     depends_on = dictinory['DependsOn'].split(' '),
                                                     size = int(size[index_of_w]),
                                                     i_batch = i_batch,
                                                     i_minibatch = iter[1]
                                                     )
+                i_minibatch_list.add(iter[1])
                                                     
         elif all(element in dictinory for element in data_fields):
             data_dict[dictinory['JobId']] = Task(id = dictinory['JobId'],
@@ -76,7 +79,7 @@ def generate_task(logs_file_name, i_batch, graph_test_descendants):
     print(f'{n} tasks')
     print('generate task -- done. ')
     print('-'*10)
-    return task_dict, data_dict
+    return task_dict, data_dict, G, len(i_minibatch_list) - 1
 
 def depth(graph, root=None):
     """Вычисляет глубину каждого узла в графе относительно заданного корня."""

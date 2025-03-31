@@ -6,7 +6,7 @@ import time
 import argparse
 from nntilesim.tasks_generator import generate_task
 
-def main(eviction_mode, pop_task_mode, push_task_mode, gpu_memory_size, n_workers, logs_file_name, i_batch, graph_test_descendants, n_minibatch_hyper):
+def main(eviction_mode, pop_task_mode, push_task_mode, gpu_memory_size, n_workers, logs_file_name, i_batch, graph_test_descendants, n_tile_hyper):
     print('Configs:')
     print(f"eviction_mode: {eviction_mode}")
     print(f"pop_task_mode: {pop_task_mode}")
@@ -16,13 +16,13 @@ def main(eviction_mode, pop_task_mode, push_task_mode, gpu_memory_size, n_worker
     print(f"i_batch: {i_batch}")
     if push_task_mode == PUSH_TASK_GRAPH_TEST:
         print(f"graph_test_descendants: {graph_test_descendants}")
-    elif push_task_mode == PUSH_TASK_MPHASE_MINIBATCH:
-        print(f"n_minibatch_hyper: {n_minibatch_hyper}")
+    elif push_task_mode == PUSH_TASK_MPHASE_TILE:
+        print(f"n_tile_hyper: {n_tile_hyper}")
     print('-'*10)
 
     start_time = time.time()
 
-    task_list, data_list = generate_task(logs_file_name, i_batch, graph_test_descendants)
+    task_list, data_list, graph, n_minibatch = generate_task(logs_file_name, i_batch, graph_test_descendants)
 
     cpu = CPU()
     workers = [Worker(name=i, 
@@ -36,7 +36,7 @@ def main(eviction_mode, pop_task_mode, push_task_mode, gpu_memory_size, n_worker
     
     scheduler = Scheduler(push_task_mode)
 
-    scheduler.do_work(task_list, data_list, cpu, n_minibatch_hyper)
+    scheduler.do_work(task_list, data_list, cpu, n_tile_hyper, graph, n_minibatch)
 
     i = 0
     while len(scheduler.prio_gpu) > 0:
@@ -58,13 +58,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simulation's config")
     parser.add_argument("--eviction_mode", type=str, default=EVICTION_LRU, help="Eviction mode: LRU, evict_new_v1")
     parser.add_argument("--pop_task_mode", type=str, default=POP_TASK_GRAPH_TEST, help="pop_task mode: graph_test")
-    parser.add_argument("--push_task_mode", type=str, default=PUSH_TASK_MPHASE_MINIBATCH, help="push_task mode: graph_test, new_v2")
+    parser.add_argument("--push_task_mode", type=str, default=PUSH_TASK_MPHASE_TILE, help="push_task mode: graph_test, new_v2")
     parser.add_argument("--gpu_memory_size", type=int, default=GPU_MEMORY_SIZE, help="GPU memory size (bytes)")
     parser.add_argument("--n_workers", type=int, default=N_WORKERS, help="Number of workers (GPU)")
-    parser.add_argument("--logs_file_name", type=str, default='iteration_tasks.rec', help="Name of file with logs: *.rec")
+    parser.add_argument("--logs_file_name", type=str, default='tasks_mbs' + str(N_TILE) + '.rec', help="Name of file with logs: *.rec")
     parser.add_argument("--i_batch", type=int, default=0, help="Number of batch for simulation")
     parser.add_argument("--graph_test_descendants", type=int, default=GRAPH_TEST_DESCENDANTS, help="Hyperparameter of graph_test policy: 0, 1, 2")
-    parser.add_argument("--n_minibatch_hyper", type=int, default=N_MINIBATCH_HYPER, help="Hyperparameter of new_v2 policy")
+    parser.add_argument("--n_tile_hyper", type=int, default=N_TILE_HYPER, help="Hyperparameter of new_v2 policy")
     
     args = parser.parse_args()
     
@@ -77,5 +77,5 @@ if __name__ == "__main__":
         args.logs_file_name,
         args.i_batch,
         args.graph_test_descendants,
-        args.n_minibatch_hyper
+        args.n_tile_hyper
         )

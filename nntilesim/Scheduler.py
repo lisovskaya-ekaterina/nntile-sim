@@ -1,6 +1,9 @@
 from .const import *
-from collections import defaultdict
 import time
+import networkx as nx
+from sklearn.cluster import SpectralClustering
+import warnings
+warnings.filterwarnings("ignore")
 
 def key_wrapper(task):
     return task.priority
@@ -19,35 +22,58 @@ class Scheduler:
                 data_item.status = STATUS_DONE
                 
         self.prio_gpu.append(task)
+
+    def split_graph_into_parts(self, graph, num_parts):
+        adjacency_matrix = nx.to_numpy_array(graph)
+        
+        clustering = SpectralClustering(n_clusters=num_parts, affinity='precomputed', random_state=42)
+        labels = clustering.fit_predict(adjacency_matrix)
+        
+        subgraphs = []
+        for i in range(num_parts):
+            nodes_in_cluster = [node for node, label in zip(graph.nodes, labels) if label == i]
+            subgraph = graph.subgraph(nodes_in_cluster).copy()
+            subgraphs.append(subgraph)
+        
+        return subgraphs
     
-    def do_work(self, task_list, data_list, cpu, n_minibatch_hyper):
+    def do_work(self, task_list, data_list, cpu, n_tile_hyper, G, n_minibatch):
         start_time = time.time()
         if self.push_task_mode == PUSH_TASK_GRAPH_TEST:
             for task in task_list.values():
                 self.push_task(task, cpu, data_list)
             self.prio_gpu = sorted(self.prio_gpu, key = lambda x: x.priority, reverse = True)
 
-        elif self.push_task_mode == PUSH_TASK_MPHASE_MINIBATCH:
-            bag_of_tasks = defaultdict(list)
+        elif self.push_task_mode == PUSH_TASK_MPHASE_TILE:
+
+            G_list = [nx.DiGraph() for _ in range(n_minibatch)]
+            for task in (t for t in task_list.values() if t.i_minibatch < n_minibatch):
+                G_list[task.i_minibatch].add_node(task.id)
+
+                    
+            for G in G_list:
+                for node in G.nodes:
+                    task = task_list[node]
+                    if task.depends_on:
+                        for dep in task.depends_on:
+                            if dep in G.nodes:
+                                G.add_edge(dep, node)
+
+            for G in G_list:
+                subgraphs = self.split_graph_into_parts(G, num_parts=N_TILE)
+            
+                for i in range(0, N_TILE, n_tile_hyper):
+                    for j in range(min([len(subgraphs[s]) for s in range(i, i + n_tile_hyper)])):
+                        for k in range(min(n_tile_hyper, N_TILE - i)):
+                            task_list[list(subgraphs[i + k].nodes)[j]].priority = 0
+                            self.push_task(task_list[list(subgraphs[i + k].nodes)[j]], cpu, data_list)
+                            task_list[list(subgraphs[i + k].nodes)[j]].status = STATUS_PROGRESS
+            
             for task in task_list.values():
-                bag_of_tasks[task.i_minibatch].append(task)
-
-            n_bags = len(bag_of_tasks)
-
-            for task in bag_of_tasks[0]:
-                task.priority = 0
-                self.push_task(task, cpu, data_list)
-
-            for i in range(1, n_bags - 1, n_minibatch_hyper):
-                for j in range(len(bag_of_tasks[i])):
-                    for k in range(min(n_minibatch_hyper, n_bags - 1 - i)):
-                        bag_of_tasks[i + k][j].priority = 0
-                        self.push_task(bag_of_tasks[i + k][j], cpu, data_list)
-
-
-            for task in bag_of_tasks[max(bag_of_tasks.keys())]:
-                task.priority = 0
-                self.push_task(task, cpu, data_list)
+                if task.status == STATUS_INIT:
+                    task.priority = 0
+                    self.push_task(task, cpu, data_list)
+                    task.status = STATUS_PROGRESS
 
         data_task_list= {**task_list, **data_list}
 
