@@ -63,7 +63,7 @@ class Scheduler:
                 subgraphs = self.split_graph_into_parts(G, num_parts=N_TILE)
             
                 for i in range(0, N_TILE, n_tile_hyper):
-                    for j in range(min([len(subgraphs[s]) for s in range(i, i + n_tile_hyper)])):
+                    for j in range(min(len(sg) for sg in subgraphs[i:i + n_tile_hyper])):
                         for k in range(min(n_tile_hyper, N_TILE - i)):
                             task_list[list(subgraphs[i + k].nodes)[j]].priority = 0
                             self.push_task(task_list[list(subgraphs[i + k].nodes)[j]], cpu, data_list)

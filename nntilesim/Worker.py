@@ -30,8 +30,6 @@ class Worker:
     def pop_task(self, workers, scheduler):
         if self.pop_task_mode == POP_TASK_GRAPH_TEST:
             return self.pop_task_graph_test(workers, scheduler)
-        elif self.pop_task_mode == POP_TASK_NEW_V2:
-            return self.pop_task_new_v2(workers, scheduler)
     
     def eviction_LRU(self):
         '''
