@@ -30,6 +30,8 @@ class Worker:
             return self.eviction_LRU()
         elif self.eviction_mode == EVICTION_NEW_V1:
             return self.eviction_new_v1()
+        elif self.eviction_mode == EVICTION_MEMORY_THRESHOLD:
+            return self.eviction_by_memory_usage(memory_threshold=0.01, free_memory_percentage=0.5)  # X% и Y%
 
     def pop_task(self, workers: List['Worker']) -> None:
         
@@ -198,3 +200,27 @@ class Worker:
                     w.memory.memory.remove(data)
         self.work_time += data.size / TIME_DELIVERY_DATA
         self.n_load += 1
+
+    def eviction_by_memory_usage(self, memory_threshold: float, free_memory_percentage: float) -> None:
+        '''
+        Evicts tasks from GPU memory if the memory usage exceeds the given threshold (X%).
+        Frees up the specified percentage (Y%) of memory.
+        
+        :param memory_threshold: The memory usage threshold (e.g., 0.8 for 80%).
+        :param free_memory_percentage: The percentage of memory to free (e.g., 0.2 for 20%).
+        '''
+        # Calculate the current memory usage as a percentage
+        current_usage = self.check_busy_space() / self.memory.memory_size
+
+        # If memory usage exceeds the threshold, start evicting tasks
+        if current_usage > memory_threshold:
+            # Calculate the amount of memory to free
+            memory_to_free = self.memory.memory_size * free_memory_percentage
+            freed_memory = 0
+
+            # Evict tasks until the required memory is freed
+            while freed_memory < memory_to_free and self.memory.memory:
+                # Evict the least recently used task (first in the sorted list)
+                task_to_evict = self.memory.memory.pop(0)
+                self.cpu.memory.append(task_to_evict)
+                freed_memory += task_to_evict.size

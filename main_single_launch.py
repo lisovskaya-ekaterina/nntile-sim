@@ -61,9 +61,9 @@ def main(eviction_mode, pop_task_mode, push_task_mode, push_task_parameter, gpu_
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simulation's config")
-    parser.add_argument("--eviction_mode", type=str, default=EVICTION_LRU, help="Eviction mode: LRU, evict_new_v1")
-    parser.add_argument("--pop_task_mode", type=str, default=POP_TASK_FUNCTION1, help="pop_task mode: dmdasd, pop_new_v1")
-    parser.add_argument("--push_task_mode", type=str, default=PUSH_TEST, help="push_task mode: dmdasd, push_new_v1, random")
+    parser.add_argument("--eviction_mode", type=str, default=EVICTION_MEMORY_THRESHOLD, help="Eviction mode: LRU, evict_new_v1")
+    parser.add_argument("--pop_task_mode", type=str, default=POP_TASK_DMDASD, help="pop_task mode: dmdasd, pop_new_v1")
+    parser.add_argument("--push_task_mode", type=str, default=PUSH_TASK_DMDASD, help="push_task mode: dmdasd, push_new_v1, random")
     parser.add_argument("--push_task_parameter", type=str, default=P1) # new 
     parser.add_argument("--gpu_memory_size", type=int, default=GPU_MEMORY_SIZE, help="GPU memory size (bytes)") 
     parser.add_argument("--n_workers", type=int, default=N_WORKERS, help="Number of workers (GPU)")
