@@ -18,7 +18,7 @@ class Scheduler:
             return self.push_task_random(task, workers, data_list)
         elif self.push_task_mode == PUSH_TEST:
             return self.push_task_test(task, workers, data_list)
-        
+
     def push_task_test(self, task, workers, data_list):
         '''
         с загрузкой каждой задачи загружаются данные для нее 

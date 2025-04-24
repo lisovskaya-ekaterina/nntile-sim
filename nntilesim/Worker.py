@@ -38,7 +38,43 @@ class Worker:
             return self.pop_task_dmdasd(workers)
         elif self.pop_task_mode == POP_TASK_NEW_V1:
             return self.pop_task_new_v1(workers)
+        elif self.pop_task_mode == POP_TASK_FUNCTION1: 
+            return self.pop_task_function1(workers)
+        
+    def pop_task_function1(self, workers: List['Worker']) -> None:
+        if self.current_task:
+            self.queue.remove(self.current_task)
+            self.current_task.status = STATUS_DONE
+            self.memory.memory.append(self.current_task)
+            self.work_time += self.current_task.task_duration
+            
+        def can_execute(task: Task) -> bool:
+            return all(data.status == STATUS_DONE for data in task.depends_on)
 
+        self.current_task = next((task for task in self.queue if task.status == STATUS_READY or can_execute(task)), None)
+
+        if not self.current_task:
+            return
+        
+        additional_tasks = []
+        
+        priority_data = []
+       
+        if len(self.queue) >50: 
+            additional_tasks = [task for task in self.queue if task.status == STATUS_READY or can_execute(task)]
+            additional_tasks = [additional_tasks[i] for i in range(1, 45)]
+            for additional_task in additional_tasks:
+                for d in additional_task.depends_on:
+                    if d not in self.memory.memory:
+                        self.load_data(d, workers)
+                        
+        for d in self.current_task.depends_on:
+            priority_data.append(d)
+            if d not in self.memory.memory:
+                self.load_data(d, workers)
+                
+
+        self.update_useless_data(self.current_task.depends_on)
     def eviction_LRU(self) -> None:
         '''
         Least Recently Used eviction policy

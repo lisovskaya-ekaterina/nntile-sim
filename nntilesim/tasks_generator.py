@@ -60,8 +60,8 @@ def generate_task(logs_file_name, i_epoch, i_batch, push_task_mode, push_task_pa
     '''
     TODO get_graph нужно запускать только по требованию, добавить параметр соответствующий
     '''
-    if push_task_mode == PUSH_TEST:
-        G = get_graph(f'examples/{logs_file_name}')
+    # if push_task_mode == PUSH_TEST:
+    G = get_graph(f'examples/{logs_file_name}')
     task_fields = ['Name', 'DependsOn', 'JobId', 'EndTime', 'StartTime', 'Iteration', 'Modes', 'Sizes']
     data_fields = ['JobId']
 
