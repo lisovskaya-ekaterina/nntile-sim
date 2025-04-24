@@ -41,6 +41,28 @@ class Worker:
         elif self.pop_task_mode == POP_TASK_FUNCTION1: 
             return self.pop_task_function1(workers)
         
+    def preload_data_for_tasks(self, workers: List['Worker'], preload_count: int) -> None:
+        '''
+        Preloads data for the current task and the next X tasks in the queue.
+        Ensures that data required for the current task is not evicted.
+        '''
+        if not self.current_task:
+            return
+
+        # Collect data needed for the current task
+        current_task_data = self.current_task.depends_on
+
+        # Collect data for the next X tasks in the queue
+        preload_tasks = [task for task in self.queue if task.status == STATUS_READY][:preload_count]
+        preload_data = set()
+        for task in preload_tasks:
+            preload_data.update(task.depends_on)
+
+        # Load data for the current task and preload tasks
+        for data in preload_data:
+            if data not in self.memory.memory and data not in current_task_data:
+                self.load_data(data, workers)
+            
     def pop_task_function1(self, workers: List['Worker']) -> None:
         if self.current_task:
             self.queue.remove(self.current_task)
@@ -55,25 +77,12 @@ class Worker:
 
         if not self.current_task:
             return
-        
-        additional_tasks = []
-        
-        priority_data = []
-       
-        if len(self.queue) >50: 
-            additional_tasks = [task for task in self.queue if task.status == STATUS_READY or can_execute(task)]
-            additional_tasks = [additional_tasks[i] for i in range(1, 45)]
-            for additional_task in additional_tasks:
-                for d in additional_task.depends_on:
-                    if d not in self.memory.memory:
-                        self.load_data(d, workers)
-                        
+   
         for d in self.current_task.depends_on:
-            priority_data.append(d)
             if d not in self.memory.memory:
                 self.load_data(d, workers)
                 
-
+        self.preload_data_for_tasks(workers, preload_count=1)  
         self.update_useless_data(self.current_task.depends_on)
     def eviction_LRU(self) -> None:
         '''
