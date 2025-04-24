@@ -78,11 +78,12 @@ class Worker:
         if not self.current_task:
             return
    
+        self.preload_data_for_tasks(workers, preload_count=50)  
+        
         for d in self.current_task.depends_on:
             if d not in self.memory.memory:
                 self.load_data(d, workers)
                 
-        self.preload_data_for_tasks(workers, preload_count=1)  
         self.update_useless_data(self.current_task.depends_on)
     def eviction_LRU(self) -> None:
         '''
