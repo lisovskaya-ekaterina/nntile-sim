@@ -47,6 +47,7 @@ def main(eviction_mode, pop_task_mode, push_task_mode, push_task_parameter, gpu_
         print(f'{worker.name} : {len(worker.queue)} tasks')
     while not all_tasks_completed:
         for worker in workers:
+            # print(f'{worker.check_busy_space()/1024/1024/1024} Gb')
             worker.pop_task(workers)
             if all(len(worker.queue) == 0 for worker in workers):
                 all_tasks_completed = True
@@ -61,7 +62,7 @@ def main(eviction_mode, pop_task_mode, push_task_mode, push_task_parameter, gpu_
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simulation's config")
-    parser.add_argument("--eviction_mode", type=str, default=EVICTION_MEMORY_THRESHOLD, help="Eviction mode: LRU, evict_new_v1")
+    parser.add_argument("--eviction_mode", type=str, default=EVICTION_LRU, help="Eviction mode: LRU, evict_new_v1")
     parser.add_argument("--pop_task_mode", type=str, default=POP_TASK_DMDASD, help="pop_task mode: dmdasd, pop_new_v1")
     parser.add_argument("--push_task_mode", type=str, default=PUSH_TASK_DMDASD, help="push_task mode: dmdasd, push_new_v1, random")
     parser.add_argument("--push_task_parameter", type=str, default=P1) # new 

@@ -3,6 +3,17 @@ from .CPU import CPU
 from .const import *
 import sys
 from typing import List
+import logging
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.DEBUG,  # Уровень логирования: DEBUG для подробного вывода
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(f'worker_{1}.log')  # Логирование в файл
+        
+    ]# logging.StreamHandler()  # Логирование в консоль
+)
 
 sys.setrecursionlimit(3000000)
 
@@ -26,23 +37,25 @@ class Worker:
         self.memory = WorkerMemory(memory_size, name, memory)
 
     def eviction(self) -> None:
+        logging.debug(f"Worker {self.name}: Starting eviction with mode {self.eviction_mode}.")
         if self.eviction_mode == EVICTION_LRU:
-            return self.eviction_LRU()
+            self.eviction_LRU()
         elif self.eviction_mode == EVICTION_NEW_V1:
-            return self.eviction_new_v1()
+            self.eviction_new_v1()
         elif self.eviction_mode == EVICTION_MEMORY_THRESHOLD:
-            return self.eviction_by_memory_usage(memory_threshold=0.01, free_memory_percentage=0.5)  # X% и Y%
+            self.eviction_by_memory_usage(memory_threshold=0.7, free_memory_percentage=0.4)  # X% и Y%
+        logging.debug(f"Worker {self.name}: Eviction completed.")
 
     def pop_task(self, workers: List['Worker']) -> None:
-        
-        
+        logging.debug(f"Worker {self.name}: Popping task with mode {self.pop_task_mode}.")
         if self.pop_task_mode == POP_TASK_DMDASD:
-            return self.pop_task_dmdasd(workers)
+            self.pop_task_dmdasd(workers)
         elif self.pop_task_mode == POP_TASK_NEW_V1:
-            return self.pop_task_new_v1(workers)
+            self.pop_task_new_v1(workers)
         elif self.pop_task_mode == POP_TASK_FUNCTION1: 
-            return self.pop_task_function1(workers)
-        
+            self.pop_task_function1(workers)
+        logging.debug(f"Worker {self.name}: Task popped successfully.")
+
     def preload_data_for_tasks(self, workers: List['Worker'], preload_count: int) -> None:
         '''
         Preloads data for the current task and the next X tasks in the queue.
@@ -93,9 +106,12 @@ class Worker:
         By default in StarPU scheduling policies
         Evicts data from worker memory that has not been used for the longest time
         '''
-        data = self.memory.memory[0]
-        self.memory.memory.remove(data)
-        self.cpu.memory.append(data)
+        logging.debug(f"Worker {self.name}: Performing LRU eviction.")
+        if self.memory.memory:
+            data = self.memory.memory.pop(0)
+            self.cpu.memory.append(data)
+            self.work_time += data.size / TIME_DELIVERY_DATA
+            logging.info(f"Worker {self.name}: Evicted data {data.id} using LRU policy.")
 
     def pop_task_dmdasd(self, workers: List['Worker']) -> None:
         '''
@@ -167,18 +183,21 @@ class Worker:
         A function that returns the current amount of occupied memory on the worker.
         '''
         self.busy_space = sum(elem.size for elem in self.memory.memory)
+        logging.debug(f"Worker {self.name}: Current memory usage: {self.busy_space}.")
         return self.busy_space
 
     def update_useless_data(self, data_need_to_work: List[Task]) -> None:
         '''
         A function that, at the task's start time, updates the least recently used counter for each piece of data in memory.
         '''
+        logging.debug(f"Worker {self.name}: Updating LRU counters for memory data.")
         for task in self.memory.memory:
             if task not in data_need_to_work:
                 task.unused_time += 1
             else:
                 task.unused_time = 0
         self.memory.memory = sorted(self.memory.memory, key=lambda x: x.unused_time, reverse=True)
+        # logging.debug(f"Worker {self.name}: LRU counters updated.")
 
     def load_data(self, data: Task, workers: List['Worker']) -> None:
         '''
@@ -189,7 +208,9 @@ class Worker:
         After that, it loads the data into the worker's memory and deletes the data from the CPU's memory.
         The variables for collecting statistics (runtime and number of loads) are increased accordingly.
         '''
+        logging.debug(f"Worker {self.name}: Attempting to load data {data.id} of size {data.size}.")
         while data.size + self.check_busy_space() > self.memory.memory_size:
+            logging.warning(f"Worker {self.name}: Memory full. Current usage: {self.check_busy_space()}. Evicting data.")
             self.eviction()
         self.memory.memory.append(data)
         if data in self.cpu.memory:
@@ -200,6 +221,7 @@ class Worker:
                     w.memory.memory.remove(data)
         self.work_time += data.size / TIME_DELIVERY_DATA
         self.n_load += 1
+        logging.info(f"Worker {self.name}: Data {data.id} loaded successfully. Current memory usage: {self.check_busy_space()}.")
 
     def eviction_by_memory_usage(self, memory_threshold: float, free_memory_percentage: float) -> None:
         '''
@@ -209,11 +231,10 @@ class Worker:
         :param memory_threshold: The memory usage threshold (e.g., 0.8 for 80%).
         :param free_memory_percentage: The percentage of memory to free (e.g., 0.2 for 20%).
         '''
-        # Calculate the current memory usage as a percentage
+        logging.debug(f"Worker {self.name}: Checking memory usage for threshold-based eviction.")
         current_usage = self.check_busy_space() / self.memory.memory_size
-
-        # If memory usage exceeds the threshold, start evicting tasks
         if current_usage > memory_threshold:
+            logging.warning(f"Worker {self.name}: Memory usage {current_usage:.2f} exceeds threshold {memory_threshold}.")
             # Calculate the amount of memory to free
             memory_to_free = self.memory.memory_size * free_memory_percentage
             freed_memory = 0
@@ -223,4 +244,8 @@ class Worker:
                 # Evict the least recently used task (first in the sorted list)
                 task_to_evict = self.memory.memory.pop(0)
                 self.cpu.memory.append(task_to_evict)
+                self.work_time += task_to_evict.size / TIME_DELIVERY_DATA
                 freed_memory += task_to_evict.size
+                logging.info(f"Worker {self.name}: Evicted data {task_to_evict.id}. Freed {freed_memory} bytes.")
+        else:
+            logging.debug(f"Worker {self.name}: Memory usage {current_usage:.2f} is within acceptable limits.")
