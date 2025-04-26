@@ -43,7 +43,7 @@ class Worker:
         elif self.eviction_mode == EVICTION_NEW_V1:
             self.eviction_new_v1()
         elif self.eviction_mode == EVICTION_MEMORY_THRESHOLD:
-            self.eviction_by_memory_usage(memory_threshold=0.7, free_memory_percentage=0.4)  # X% и Y%
+            self.eviction_by_memory_usage(memory_threshold=0.5, free_memory_percentage=0.4)  # X% и Y%
         logging.debug(f"Worker {self.name}: Eviction completed.")
 
     def pop_task(self, workers: List['Worker']) -> None:
@@ -211,6 +211,7 @@ class Worker:
         logging.debug(f"Worker {self.name}: Attempting to load data {data.id} of size {data.size}.")
         while data.size + self.check_busy_space() > self.memory.memory_size:
             logging.warning(f"Worker {self.name}: Memory full. Current usage: {self.check_busy_space()}. Evicting data.")
+            logging.warning(f"Worker {self.name}: Memory full. Current usage + new data : {self.check_busy_space() + data.size}. Evicting data.")
             self.eviction()
         self.memory.memory.append(data)
         if data in self.cpu.memory:
@@ -242,6 +243,7 @@ class Worker:
             # Evict tasks until the required memory is freed
             while freed_memory < memory_to_free and self.memory.memory:
                 # Evict the least recently used task (first in the sorted list)
+               
                 task_to_evict = self.memory.memory.pop(0)
                 self.cpu.memory.append(task_to_evict)
                 self.work_time += task_to_evict.size / TIME_DELIVERY_DATA
