@@ -43,7 +43,7 @@ class Worker:
         elif self.eviction_mode == EVICTION_NEW_V1:
             self.eviction_new_v1()
         elif self.eviction_mode == EVICTION_MEMORY_THRESHOLD:
-            self.eviction_by_memory_usage(memory_threshold=0.5, free_memory_percentage=0.4)  # X% и Y%
+            self.eviction_by_memory_usage(memory_threshold=0.8, free_memory_percentage=0.4)  # X% и Y%
         logging.debug(f"Worker {self.name}: Eviction completed.")
 
     def pop_task(self, workers: List['Worker']) -> None:
@@ -54,6 +54,8 @@ class Worker:
             self.pop_task_new_v1(workers)
         elif self.pop_task_mode == POP_TASK_FUNCTION1: 
             self.pop_task_function1(workers)
+        elif self.pop_task_mode == POP_TASK_FUNCTION2: 
+            self.pop_task_function2(workers)
         logging.debug(f"Worker {self.name}: Task popped successfully.")
 
     def preload_data_for_tasks(self, workers: List['Worker'], preload_count: int) -> None:
@@ -188,16 +190,24 @@ class Worker:
 
     def update_useless_data(self, data_need_to_work: List[Task]) -> None:
         '''
-        A function that, at the task's start time, updates the least recently used counter for each piece of data in memory.
+        Updates the least recently used counter for each piece of data in memory.
         '''
         logging.debug(f"Worker {self.name}: Updating LRU counters for memory data.")
         for task in self.memory.memory:
+            # Проверяем наличие атрибута unused_time
+            if not hasattr(task, 'unused_time'):
+                task.unused_time = 0
+
             if task not in data_need_to_work:
                 task.unused_time += 1
             else:
                 task.unused_time = 0
+
+            logging.debug(f"Worker {self.name}: Task {task.id} unused_time updated to {task.unused_time}.")
+
+        # Сортируем память по unused_time в порядке убывания
         self.memory.memory = sorted(self.memory.memory, key=lambda x: x.unused_time, reverse=True)
-        # logging.debug(f"Worker {self.name}: LRU counters updated.")
+        logging.debug(f"Worker {self.name}: Memory sorted by unused_time.")
 
     def load_data(self, data: Task, workers: List['Worker']) -> None:
         '''
@@ -251,3 +261,68 @@ class Worker:
                 logging.info(f"Worker {self.name}: Evicted data {task_to_evict.id}. Freed {freed_memory} bytes.")
         else:
             logging.debug(f"Worker {self.name}: Memory usage {current_usage:.2f} is within acceptable limits.")
+
+
+    def pop_task_function2(self, workers: List['Worker']) -> None:
+        """
+        Selects the next task to execute and unloads data used by the completed task
+        that is not required by the next task.
+        """
+        if self.current_task:
+            # Завершаем текущую задачу
+            self.queue.remove(self.current_task)
+            self.current_task.status = STATUS_DONE
+            self.memory.memory.append(self.current_task)
+            self.work_time += self.current_task.task_duration
+
+            # Выгружаем данные, которые больше не нужны
+            self.unload_unused_data()
+
+        def can_execute(task: Task) -> bool:
+            return all(data.status == STATUS_DONE for data in task.depends_on)
+
+        # Выбираем следующую задачу
+        self.current_task = next((task for task in self.queue if task.status == STATUS_READY or can_execute(task)), None)
+
+        if not self.current_task:
+            return
+
+        # Предзагрузка данных для текущей задачи
+        self.preload_data_for_tasks(workers, preload_count=50)
+
+        # Загружаем данные, необходимые для выполнения текущей задачи
+        for d in self.current_task.depends_on:
+            if d not in self.memory.memory:
+                self.load_data(d, workers)
+
+        # Обновляем данные, которые больше не используются
+        self.update_useless_data(self.current_task.depends_on)
+        
+    def unload_unused_data(self) -> None:
+        """
+        Unloads all data used by the completed task that are not required by the next task.
+        """
+        if not self.current_task:
+            logging.debug(f"Worker {self.name}: No current task to process for unloading.")
+            return
+
+        # Получаем данные, которые использовались завершённой задачей
+        completed_task_data = set(self.current_task.depends_on)
+
+        # Получаем данные, которые требуются для следующей задачи
+        next_task_data = set()
+        if self.queue:
+            next_task = self.queue[0]  # Предполагаем, что следующая задача — первая в очереди
+            next_task_data = set(next_task.depends_on)
+
+        # Вычисляем данные, которые можно выгрузить
+        data_to_unload = completed_task_data - next_task_data
+
+        # Выгружаем данные
+        for data in list(self.memory.memory):  
+            if data in data_to_unload:
+                self.memory.memory.remove(data)
+                self.cpu.memory.append(data)
+                logging.info(f"Worker {self.name}: Unloaded data {data.id} from memory.")
+
+        logging.debug(f"Worker {self.name}: Unloading completed. Current memory usage: {self.check_busy_space()}.")
