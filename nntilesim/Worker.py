@@ -22,29 +22,51 @@ class Worker:
         self.eviction_mode = eviction_mode
         self.pop_task_mode = pop_task_mode
         self.memory = WorkerMemory(memory_size, name, memory)
+        self.lru_threshold = LRU_THRESHOLD
+        self.memory_evict_percent = MEMORY_EVICT_PERSENT
 
     def eviction(self):
         if self.eviction_mode == EVICTION_LRU:
-            return self.eviction_LRU()
+            self.eviction_LRU()
+        elif self.eviction_mode == EVICTION_MRU:
+            self.eviction_MRU()
+        elif self.eviction_mode == EVICTION_THRESHOLD:
+            self.eviction_threshold()
     
     def pop_task(self, workers, scheduler):
         if self.pop_task_mode == POP_TASK_GRAPH_TEST:
-            return self.pop_task_graph_test(workers, scheduler)
+            self.pop_task_graph_test(workers, scheduler)
+        elif self.pop_task_mode == POP_TASK_NEW_V2:
+            self.pop_task_new_v2(workers, scheduler)
+    
+    def evict_after_task(self):
+        if self.current_task:
+            data_to_remove = [data for data in self.memory.memory]
+            for data in data_to_remove:
+                self.memory.memory.remove(data)
+                self.cpu.memory.append(data)
+
+    def eviction_threshold(self):
+        num_to_evict = int(len(self.memory.memory) * self.memory_evict_percent)
+        for _ in range(num_to_evict):
+            data = next((data for data in self.memory.memory if data.protected == False), None)
+            if data:
+                self.memory.memory.remove(data)
+                self.cpu.memory.append(data)
     
     def eviction_LRU(self):
-        '''
-        Least Recently Used eviction policy
-        By default in StarPU scheduling policies
-        Evictees data from worker memory that has not been used for the longest time
-        '''
-        data = self.memory.memory[0]
-        self.memory.memory.remove(data)
-        self.cpu.memory.append(data)
+        data = next((data for data in self.memory.memory if data.protected == False), None)
+        if data:
+            self.memory.memory.remove(data)
+            self.cpu.memory.append(data)
+
+    def eviction_MRU(self):
+        data = next((data for data in self.memory.memory[::-1] if data.protected == False), None)
+        if data:
+            self.memory.memory.remove(data)
+            self.cpu.memory.append(data)
             
     def pop_task_graph_test(self, workers, scheduler):
-        '''
-        Select the first task from the queue for which all the depends on tasks is done
-        '''
         if self.current_task:
             scheduler.prio_gpu.remove(self.current_task)
             self.current_task.status = STATUS_DONE
@@ -62,42 +84,95 @@ class Worker:
 
         for d in self.current_task.depends_on:
             if d not in self.memory.memory:
-                self.load_data(d, workers)
+                self.load_data(d, workers, d.size / TIME_DELIVERY_DATA)
         
         self.update_usless_data(self.current_task.depends_on)
 
-    def pop_task_new_v2(self, workers):
-        pass
+        if self.eviction_mode == EVICT_AFTER_TASK:
+            self.evict_after_task()
+
+    def pop_task_new_v2(self, workers, scheduler):
+
+        if self.current_task:
+            scheduler.prio_gpu.remove(self.current_task)
+            self.current_task.status = STATUS_DONE
+            self.memory.memory.append(self.current_task)
+            self.work_time += self.current_task.task_duration
+
+        def can_execute(task):
+            return all(data.status == STATUS_DONE for data in task.depends_on)
+
+        self.current_task = next((task for task in scheduler.prio_gpu
+                                if task.status == STATUS_READY or can_execute(task)), None)
+
+        if not self.current_task:
+            return
+
+        current_task_data_ids = set(id(d) for d in self.current_task.depends_on)
+
+        lookahead_data_ids = set()
+        lookahead_tasks = [
+            task for task in scheduler.prio_gpu
+            if task != self.current_task and (task.status == STATUS_READY or can_execute(task))
+        ][:PRELOAD_N]
+
+        memory_ids_set = set(id(data) for data in self.memory.memory)
+
+        all_data = {id(d): d for d in self.current_task.depends_on}
+        all_data.update({id(d): d for task in lookahead_tasks for d in task.depends_on})
+
+        for next_task in lookahead_tasks:
+            for d in next_task.depends_on:
+                if id(d) not in memory_ids_set and id(d) not in current_task_data_ids:
+                    lookahead_data_ids.add(id(d))
+
+        for data_id in current_task_data_ids:
+            data = all_data.get(data_id)
+            if data and data not in self.memory.memory:
+                self.load_data(data, workers, data.size / TIME_DELIVERY_DATA)
+
+        for data_id in lookahead_data_ids:
+            data = all_data.get(data_id)
+            if data:
+                self.load_data(data, workers, data.size / TIME_DELIVERY_DATA)
+                data.protected = True
+
+        all_loaded_data_ids = current_task_data_ids.union(lookahead_data_ids)
+        all_loaded_data = [all_data[data_id] for data_id in all_loaded_data_ids if data_id in all_data]
+        self.update_usless_data(all_loaded_data)
+
+        for data_id in lookahead_data_ids:
+            data = all_data.get(data_id)
+            if data:
+                data.protected = False
+
+        if self.eviction_mode == EVICT_AFTER_TASK:
+            self.evict_after_task()
 
     def check_busy_space(self):
-        '''
-        A function that returns the current amount of occupied memory on the worker.
-        '''
         self.busy_space = 0
         for elem in self.memory.memory:
             self.busy_space += elem.size
         return self.busy_space
     
     def update_usless_data(self, data_need_to_work : list [Task]):
-        '''
-        A function that, at the task's start time, updates the least recently used counter for each piece of data in memory.
-        '''
         for task in self.memory.memory:
+            if not hasattr(task, 'unused_time'):
+                task.unused_time = 0
             if task not in data_need_to_work:
                 task.unused_time += 1
+
+                if self.eviction_mode == EVICT_BY_UNUSED_TH:
+                    if task.unused_time >= self.lru_threshold:
+                        self.memory.memory.remove(task)
+                        self.cpu.memory.append(task)
+                        continue
+                    
             else:
                 task.unused_time = 0
         self.memory.memory = sorted(self.memory.memory, key = lambda x: x.unused_time, reverse = True)
 
-    def load_data(self, data, workers):
-        '''
-        A function that has as input a data that needs to be loaded into the worker's memory. 
-        First, it check whether there is an opportunity to download, and, 
-        if necessary, evictees (according to the eviction policy) data from the worker's memory 
-        until there is enough space for new data.
-        After that, it loads the data into the worker's memory and deletes the data from the CPU's memory.
-        The variables for collecting statistics (runtime and number of loads) are increased accordingly.
-        '''
+    def load_data(self, data, workers, time):
         while data.size + self.check_busy_space() > self.memory.memory_size:
             self.eviction()
         self.memory.memory.append(data)
@@ -107,5 +182,5 @@ class Worker:
             for w in workers:
                 if w.name != self.name and data in w.memory.memory: 
                     w.memory.memory.remove(data)
-        self.work_time += data.size / TIME_DELIVERY_DATA
+        self.work_time += time
         self.n_load += 1

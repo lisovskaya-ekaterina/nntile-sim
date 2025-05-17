@@ -13,3 +13,4 @@ class Task:
     i_batch : int = 0
     i_minibatch : int = 0
     priority : int = 0
+    protected : bool = False

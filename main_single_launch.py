@@ -56,15 +56,15 @@ def main(eviction_mode, pop_task_mode, push_task_mode, gpu_memory_size, n_worker
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simulation's config")
-    parser.add_argument("--eviction_mode", type=str, default=EVICTION_LRU, help="Eviction mode: LRU, evict_new_v1")
-    parser.add_argument("--pop_task_mode", type=str, default=POP_TASK_GRAPH_TEST, help="pop_task mode: graph_test")
-    parser.add_argument("--push_task_mode", type=str, default=PUSH_TASK_MPHASE_TILE, help="push_task mode: graph_test, new_v2")
+    parser.add_argument("--eviction_mode", type=str, default=EVICT_BY_UNUSED_TH, help="Eviction mode: EVICTION_LRU, EVICTION_MRU, EVICTION_THRESHOLD, EVICT_BY_UNUSED_TH, EVICT_AFTER_TASK")
+    parser.add_argument("--pop_task_mode", type=str, default=POP_TASK_GRAPH_TEST, help="pop_task mode: POP_TASK_GRAPH_TEST, POP_TASK_NEW_V2")
+    parser.add_argument("--push_task_mode", type=str, default=PUSH_TASK_GRAPH_TEST, help="push_task mode: PUSH_TASK_GRAPH_TEST, PUSH_TASK_MPHASE_TILE")
     parser.add_argument("--gpu_memory_size", type=int, default=GPU_MEMORY_SIZE, help="GPU memory size (bytes)")
     parser.add_argument("--n_workers", type=int, default=N_WORKERS, help="Number of workers (GPU)")
     parser.add_argument("--logs_file_name", type=str, default='tasks_mbs' + str(N_TILE) + '.rec', help="Name of file with logs: *.rec")
     parser.add_argument("--i_batch", type=int, default=0, help="Number of batch for simulation")
-    parser.add_argument("--graph_test_descendants", type=int, default=GRAPH_TEST_DESCENDANTS, help="Hyperparameter of graph_test policy: 0, 1, 2")
-    parser.add_argument("--n_tile_hyper", type=int, default=N_TILE_HYPER, help="Hyperparameter of new_v2 policy")
+    parser.add_argument("--graph_test_descendants", type=int, default=GRAPH_TEST_DESCENDANTS, help="Hyperparameter of graph_test policy: 0,...,4")
+    parser.add_argument("--n_tile_hyper", type=int, default=N_TILE_HYPER, help="Hyperparameter of new_v2 policy: 0,...,3")
     
     args = parser.parse_args()
     
