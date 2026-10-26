@@ -1,2 +1,11 @@
 
 statistics.ipynb
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# macOS
+.DS_Store
