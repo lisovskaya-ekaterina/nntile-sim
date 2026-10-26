@@ -34,3 +34,24 @@ def test_orders():
     assert [t.job_id for t in order_tasks([b, a])] == ['a', 'b']
     with pytest.raises(SimulationError, match='violates'):
         order_tasks([a, b], 'custom', ('b', 'a'))
+
+def test_prefetch_overlaps_compute():
+    ts = [task('1', [('a', 40, 'R')], duration=30),
+          task('2', [('b', 40, 'R')], ('1',))]
+    result = Simulator(ts, cfg(100)).run()
+    compute = next(e for e in result.events if e.lane == 'Compute' and e.job_id == '1')
+    load = next(e for e in result.events if e.lane == 'H2D' and e.handle == 'b')
+    assert max(compute.start_us, load.start_us) < min(compute.end_us, load.end_us)
+    assert result.peak_bytes <= 100
+
+
+def test_dirty_data_is_unloaded_before_reload():
+    ts = [task('1', [('x', 40, 'W'), ('q', 20, 'R')]),
+          task('2', [('y', 50, 'R'), ('z', 30, 'R')], ('1',)),
+          task('3', [('x', 40, 'R')], ('2',))]
+    result = Simulator(ts, cfg(100)).run()
+    unload = next(e for e in result.events if e.lane == 'D2H' and e.handle == 'x')
+    reload = next(e for e in result.events if e.lane == 'H2D' and e.handle == 'x')
+    assert unload.end_us <= reload.start_us
+    assert result.peak_bytes <= 100
+    assert result.completed_jobs == 3
