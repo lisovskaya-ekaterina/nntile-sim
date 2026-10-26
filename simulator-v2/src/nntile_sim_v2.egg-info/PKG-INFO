@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: nntile-sim-v2
+Version: 0.1.0
+Summary: Trace model for NNTile GPU-memory scheduling research
+Requires-Python: >=3.10

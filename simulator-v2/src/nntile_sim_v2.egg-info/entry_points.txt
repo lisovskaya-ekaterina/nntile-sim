@@ -1,0 +1,2 @@
+[console_scripts]
+nntile-trace = nntile_sim.cli:main
