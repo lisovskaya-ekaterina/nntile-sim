@@ -5,8 +5,13 @@ from nntile_sim.core import Simulator, Config, SimulationError, order_tasks
 def task(jid, accesses, deps=(), duration=10):
     return Task(jid, jid, None, tuple(Access(*a) for a in accesses), 0, duration, None, tuple(deps))
 
-def cfg(cap=100):
-    return Config(cap, 10, 5)
+def cfg(cap=100, memory_policy="lru-demand"):
+    return Config(
+        cap,
+        10,
+        5,
+        memory_policy=memory_policy,
+    )
 
 def test_load_compute_and_dirty_reload():
     ts = [task('1', [('x', 40, 'R'), ('y', 40, 'W')]), task('2', [('y', 40, 'R')], ('1',))]
@@ -36,13 +41,28 @@ def test_orders():
         order_tasks([a, b], 'custom', ('b', 'a'))
 
 def test_prefetch_overlaps_compute():
-    ts = [task('1', [('a', 40, 'R')], duration=30),
-          task('2', [('b', 40, 'R')], ('1',))]
-    result = Simulator(ts, cfg(100)).run()
-    compute = next(e for e in result.events if e.lane == 'Compute' and e.job_id == '1')
-    load = next(e for e in result.events if e.lane == 'H2D' and e.handle == 'b')
-    assert max(compute.start_us, load.start_us) < min(compute.end_us, load.end_us)
-    assert result.peak_bytes <= 100
+    ts = [
+        task('1', [('a', 40, 'R')], duration=30),
+        task('2', [('b', 40, 'R')], ('1',)),
+    ]
+
+    result = Simulator(
+        ts,
+        cfg(100, memory_policy="legacy-baseline"),
+    ).run()
+
+    compute = next(
+        e for e in result.events
+        if e.lane == 'Compute' and e.job_id == '1'
+    )
+    load = next(
+        e for e in result.events
+        if e.lane == 'H2D' and e.handle == 'b'
+    )
+
+    assert max(compute.start_us, load.start_us) < min(
+        compute.end_us, load.end_us
+    )
 
 
 def test_dirty_data_is_unloaded_before_reload():

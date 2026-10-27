@@ -1,4 +1,4 @@
-"""Immutable trace entities. Times in raw trace units; duration is microseconds."""
+"""Immutable trace entities. Raw StarPU timestamps are in seconds; duration_us is in microseconds."""
 from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
@@ -28,5 +28,5 @@ class Task:
 
     @property
     def duration_us(self) -> float:
-        # StarPU .rec timestamps here are in microseconds; retain native scale.
-        return self.end_time - self.start_time
+        # StarPU tasks.rec timestamps are in seconds.
+        return (self.end_time - self.start_time) * 1_000_000

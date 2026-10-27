@@ -21,8 +21,11 @@ class Config:
     d2h_bytes_per_us: float
     compute_order: str = 'topological'
     custom_order: tuple[str, ...] | None = None
+    memory_policy: str = 'lru-demand'
 
     def __post_init__(self):
+        if self.memory_policy not in ('lru-demand', 'legacy-baseline'):
+            raise ValueError('Unknown memory policy')
         if self.capacity_bytes <= 0 or self.h2d_bytes_per_us <= 0 or self.d2h_bytes_per_us <= 0:
             raise ValueError('Capacity and bandwidths must be positive')
 
@@ -57,28 +60,18 @@ def order_tasks(tasks: Sequence[Task], mode: str = 'topological', custom: Sequen
             raise SimulationError('Custom order must contain each JobId exactly once')
         result = [by_id[j] for j in custom]
     elif mode == 'topological':
-        # Dependencies not represented in the completed task set are external.
-        indeg = {t.job_id: 0 for t in tasks}
-        children = defaultdict(list)
-        for t in tasks:
-            for dep in set(t.depends_on):
-                if dep in by_id:
-                    indeg[t.job_id] += 1
-                    children[dep].append(t.job_id)
-        ready = []
-        for t in tasks:
-            if indeg[t.job_id] == 0:
-                heappush(ready, (t.start_time, t.job_id))
-        result = []
-        while ready:
-            _, jid = heappop(ready)
-            result.append(by_id[jid])
-            for child in children[jid]:
-                indeg[child] -= 1
-                if indeg[child] == 0:
-                    heappush(ready, (by_id[child].start_time, child))
-        if len(result) != len(tasks):
-            raise SimulationError('Dependency cycle detected')
+        # Stable lexicographical topological ordering using networkx.
+        import networkx as nx
+        graph = nx.DiGraph()
+        graph.add_nodes_from(by_id)
+        graph.add_edges_from((dep, t.job_id) for t in tasks
+                             for dep in set(t.depends_on) if dep in by_id)
+        try:
+            ids = nx.lexicographical_topological_sort(
+                graph, key=lambda jid: (by_id[jid].start_time, jid))
+            result = [by_id[jid] for jid in ids]
+        except nx.NetworkXUnfeasible as exc:
+            raise SimulationError('Dependency cycle detected') from exc
     else:
         raise ValueError(f'Unknown compute order: {mode}')
     seen = set()
@@ -94,6 +87,103 @@ class Simulator:
         self.config = config
 
     def run(self) -> SimulationResult:
+        if self.config.memory_policy == 'lru-demand':
+            return self._run_lru_demand()
+        return self._run_legacy()
+
+    def _run_lru_demand(self) -> SimulationResult:
+        """Sequential demand-only execution with LRU eviction; no future-task transfers.
+
+        A write-only access can allocate/overwrite without fetching an old version.
+        Clean copies can be dropped, dirty live copies require writeback.
+        """
+        tasks, cfg = self.tasks, self.config
+        sizes = {}
+        remaining = defaultdict(int)
+        for task in tasks:
+            for a in task.accesses:
+                if a.size_bytes <= 0:
+                    raise SimulationError(f'Invalid size for {a.handle}')
+                if a.handle in sizes and sizes[a.handle] != a.size_bytes:
+                    raise SimulationError(f'Inconsistent size for {a.handle}')
+                sizes[a.handle] = a.size_bytes
+                remaining[a.handle] += 1
+        # Inputs whose first use reads are initially CPU-resident.
+        first = {}
+        for task in tasks:
+            for a in task.accesses:
+                first.setdefault(a.handle, a.reads_previous_value)
+        cpu = {h for h, reads in first.items() if reads}
+        gpu, dirty = set(), set()
+        last_touch = {}  # logical LRU recency, updated on Compute access
+        clock = 0
+        now = 0.0
+        used = peak = h2d_bytes = d2h_bytes = 0
+        events = []
+
+        def emit(lane, action, handle, job, duration):
+            nonlocal now
+            start = now
+            now += duration
+            events.append(Event(lane, action, handle, job, start, now, used))
+
+        for task in tasks:
+            accesses = {a.handle: a for a in task.accesses}
+            required = set(accesses)
+            required_size = sum(sizes[h] for h in required)
+            if required_size > cfg.capacity_bytes:
+                raise SimulationError(f'Task {task.job_id} requires more GPU memory than capacity')
+            # All handles of this task are protected during preparation.
+            for h, a in accesses.items():
+                if h in gpu:
+                    continue
+                size = sizes[h]
+                while used + size > cfg.capacity_bytes:
+                    candidates = gpu - required
+                    if not candidates:
+                        raise SimulationError(f'No evictable data before task {task.job_id}')
+                    victim = min(candidates, key=lambda x: (last_touch.get(x, -1), x))
+                    if victim in dirty and remaining[victim] > 0:
+                        d2h_bytes += sizes[victim]
+                        # D2H completion releases GPU allocation.
+                        # Transfer completes before the allocation is released.
+                        start = now
+                        now += sizes[victim] / cfg.d2h_bytes_per_us
+                        cpu.add(victim)
+                        gpu.remove(victim)
+                        dirty.discard(victim)
+                        used -= sizes[victim]
+                        events.append(Event('D2H', 'UNLOAD', victim, None, start, now, used))
+                    else:
+                        gpu.remove(victim)
+                        dirty.discard(victim)
+                        used -= sizes[victim]
+                    if victim not in cpu or remaining[victim] == 0:
+                        # A dead dirty value may be dropped without writeback.
+                        pass
+                    events.append(Event('Memory', 'DROP', victim, None, now, now, used))
+                used += size
+                peak = max(peak, used)
+                gpu.add(h)
+                if a.reads_previous_value:
+                    if h not in cpu:
+                        raise SimulationError(f'No valid version of {h} before task {task.job_id}')
+                    h2d_bytes += size
+                    emit('H2D', 'LOAD', h, None, size / cfg.h2d_bytes_per_us)
+                else:
+                    # W-only allocation; no H2D.
+                    events.append(Event('Memory', 'ALLOC', h, None, now, now, used))
+            emit('Compute', task.name, None, task.job_id, task.duration_us)
+            for h, a in accesses.items():
+                clock += 1
+                last_touch[h] = clock
+                remaining[h] -= 1
+                if a.writes_value:
+                    dirty.add(h)
+                    cpu.discard(h)
+        return SimulationResult(events, now, peak, h2d_bytes, d2h_bytes, len(tasks))
+
+    def _run_legacy(self) -> SimulationResult:
         tasks, cfg = self.tasks, self.config
         sizes = {}
         first_read = {}

@@ -9,3 +9,8 @@ __pycache__/
 
 # macOS
 .DS_Store
+# Generated simulation outputs
+/results/
+
+# Generated simulation outputs
+/simulator-v2/results/

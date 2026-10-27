@@ -1,12 +1,18 @@
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
 [project]
 name = "nntile-sim-v2"
 version = "0.1.0"
 requires-python = ">=3.10"
 description = "Trace model for NNTile GPU-memory scheduling research"
+dependencies = ["networkx>=3.0", "plotly>=5.0"]
+
 [project.scripts]
 nntile-trace = "nntile_sim.cli:main"
+nntile-sim = "nntile_sim.sim_cli:main"
+nntile-plot = "nntile_sim.plotting:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
