@@ -7,6 +7,7 @@ Baseline policy: prepare the next compute task, transfer one missing input at a
 from __future__ import annotations
 from dataclasses import dataclass, field
 from collections import defaultdict
+from collections import defaultdict, deque
 from heapq import heappush, heappop
 from typing import Sequence
 from ..model import Task
@@ -24,7 +25,11 @@ class Config:
     memory_policy: str = 'lru-demand'
 
     def __post_init__(self):
-        if self.memory_policy not in ('lru-demand', 'legacy-baseline'):
+        if self.memory_policy not in (
+            'lru-demand',
+            'legacy-baseline',
+            'belady-demand',
+        ):
             raise ValueError('Unknown memory policy')
         if self.capacity_bytes <= 0 or self.h2d_bytes_per_us <= 0 or self.d2h_bytes_per_us <= 0:
             raise ValueError('Capacity and bandwidths must be positive')
@@ -88,16 +93,31 @@ class Simulator:
 
     def run(self) -> SimulationResult:
         if self.config.memory_policy == 'lru-demand':
-            return self._run_lru_demand()
-        return self._run_legacy()
+            return self._run_demand('lru-demand')
+        if self.config.memory_policy == 'belady-demand':
+            return self._run_demand('belady-demand')
+        if self.config.memory_policy == 'legacy-baseline':
+            return self._run_legacy()
+        raise SimulationError('Unknown memory policy')
 
-    def _run_lru_demand(self) -> SimulationResult:
+    def _build_future_uses(self):
+        """Map each handle to ordered indices of tasks using it."""
+        future_uses = defaultdict(deque)
+
+        for task_idx, task in enumerate(self.tasks):
+            for handle in {a.handle for a in task.accesses}:
+                future_uses[handle].append(task_idx)
+
+        return future_uses
+
+    def _run_demand(self, policy: str) -> SimulationResult:
         """Sequential demand-only execution with LRU eviction; no future-task transfers.
 
         A write-only access can allocate/overwrite without fetching an old version.
         Clean copies can be dropped, dirty live copies require writeback.
         """
         tasks, cfg = self.tasks, self.config
+        future_uses = self._build_future_uses() if policy == 'belady-demand' else None
         sizes = {}
         remaining = defaultdict(int)
         for task in tasks:
@@ -127,8 +147,13 @@ class Simulator:
             now += duration
             events.append(Event(lane, action, handle, job, start, now, used))
 
-        for task in tasks:
+        for task_idx, task in enumerate(tasks):
             accesses = {a.handle: a for a in task.accesses}
+
+            if future_uses is not None:
+                for h in accesses:
+                    assert future_uses[h][0] == task_idx
+                    future_uses[h].popleft()
             required = set(accesses)
             required_size = sum(sizes[h] for h in required)
             if required_size > cfg.capacity_bytes:
@@ -142,7 +167,19 @@ class Simulator:
                     candidates = gpu - required
                     if not candidates:
                         raise SimulationError(f'No evictable data before task {task.job_id}')
-                    victim = min(candidates, key=lambda x: (last_touch.get(x, -1), x))
+                    if policy == 'belady-demand':
+                        victim = max(
+                            candidates,
+                            key=lambda h: (
+                                future_uses[h][0] if future_uses[h] else float('inf'),
+                                h,
+                            ),
+                        )
+                    else:
+                        victim = min(
+                            candidates,
+                            key=lambda h: (last_touch.get(h, -1), h),
+                        )
                     if victim in dirty and remaining[victim] > 0:
                         d2h_bytes += sizes[victim]
                         # D2H completion releases GPU allocation.

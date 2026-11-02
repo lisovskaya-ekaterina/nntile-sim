@@ -14,12 +14,18 @@ GBPS_TO_BYTES_PER_US = 1000.0  # decimal GB/s -> bytes/microsecond
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Simulate NNTile GPU-memory scheduling (baseline policy)")
+    parser = argparse.ArgumentParser(
+        description="Simulate NNTile GPU-memory scheduling and eviction policies"
+    )
     parser.add_argument("trace", type=Path, help="NNTile .rec trace file")
     parser.add_argument("--gpu-memory-mib", type=float, required=True, help="GPU capacity in MiB")
     parser.add_argument("--h2d-gbps", type=float, required=True, help="CPU-to-GPU bandwidth in decimal GB/s")
     parser.add_argument("--d2h-gbps", type=float, required=True, help="GPU-to-CPU bandwidth in decimal GB/s")
-    parser.add_argument("--memory-policy", choices=("lru-demand", "legacy-baseline"), default="lru-demand")
+    parser.add_argument(
+        "--memory-policy",
+        choices=("lru-demand", "belady-demand", "legacy-baseline"),
+        default="lru-demand",
+    )
     parser.add_argument("--compute-order", choices=("topological", "trace", "custom"), default="topological")
     parser.add_argument("--custom-order-file", type=Path, help="Text file with one JobId per line (required for custom order)")
     parser.add_argument("--events-csv", type=Path, help="Save simulated events as CSV")
