@@ -19,6 +19,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("trace", type=Path, help="NNTile .rec trace file")
     parser.add_argument("--gpu-memory-mib", type=float, required=True, help="GPU capacity in MiB")
+    parser.add_argument(
+        "--chunk-size-mib",
+        type=float,
+        default=None,
+        help="Fixed GPU chunk size in MiB (default: chunking disabled)",
+    )
     parser.add_argument("--h2d-gbps", type=float, required=True, help="CPU-to-GPU bandwidth in decimal GB/s")
     parser.add_argument("--d2h-gbps", type=float, required=True, help="GPU-to-CPU bandwidth in decimal GB/s")
     parser.add_argument(
@@ -38,6 +44,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.gpu_memory_mib <= 0 or args.h2d_gbps <= 0 or args.d2h_gbps <= 0:
         parser.error("GPU memory and both bandwidths must be positive")
+    if args.chunk_size_mib is not None:
+        if not (0 < args.chunk_size_mib < float("inf")):
+            parser.error("--chunk-size-mib must be a positive finite number")
+        if int(args.chunk_size_mib * MIB) < 1:
+            parser.error("--chunk-size-mib must represent at least one byte")
     if (args.compute_order == "custom") != (args.custom_order_file is not None):
         parser.error("--custom-order-file is required exactly when --compute-order custom is used")
     try:
@@ -54,6 +65,11 @@ def main(argv: list[str] | None = None) -> int:
             compute_order=args.compute_order,
             custom_order=custom,
             memory_policy=args.memory_policy,
+            chunk_size_bytes=(
+                int(args.chunk_size_mib * MIB)
+                if args.chunk_size_mib is not None
+                else None
+            ),
         )
         result = Simulator(tasks, config).run()
         if args.events_csv is not None:
@@ -71,6 +87,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"NNTile simulation ({args.memory_policy})")
     print(f"Trace: {args.trace}")
     print(f"Compute order: {args.compute_order}")
+    if config.chunk_size_bytes is not None:
+        print(f"Chunk size: {config.chunk_size_bytes / MIB:g} MiB")
     print(f"Completed tasks: {result.completed_jobs:,} / {len(tasks):,}")
     print(f"Makespan: {result.makespan_us:,.3f} us ({result.makespan_us / 1e6:,.6f} s)")
     print(f"Peak GPU memory: {result.peak_bytes / MIB:,.3f} MiB")

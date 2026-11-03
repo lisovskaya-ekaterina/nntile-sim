@@ -11,6 +11,7 @@ from collections import defaultdict, deque
 from heapq import heappush, heappop
 from typing import Sequence
 from ..model import Task
+from ..chunks import Chunk, split_into_chunks
 
 class SimulationError(RuntimeError):
     pass
@@ -23,6 +24,7 @@ class Config:
     compute_order: str = 'topological'
     custom_order: tuple[str, ...] | None = None
     memory_policy: str = 'lru-demand'
+    chunk_size_bytes: int | None = None
 
     def __post_init__(self):
         if self.memory_policy not in (
@@ -33,6 +35,15 @@ class Config:
             raise ValueError('Unknown memory policy')
         if self.capacity_bytes <= 0 or self.h2d_bytes_per_us <= 0 or self.d2h_bytes_per_us <= 0:
             raise ValueError('Capacity and bandwidths must be positive')
+        if self.chunk_size_bytes is not None and self.chunk_size_bytes <= 0:
+            raise ValueError('Chunk size must be positive')
+        if (
+            self.memory_policy == "legacy-baseline"
+            and self.chunk_size_bytes is not None
+        ):
+            raise ValueError(
+                "Chunking is not supported for legacy-baseline"
+            )
 
 @dataclass(frozen=True)
 class Event:
@@ -91,13 +102,241 @@ class Simulator:
         self.tasks = order_tasks(tasks, config.compute_order, config.custom_order)
         self.config = config
 
+    def _run_chunked_demand(self, policy: str) -> SimulationResult:
+        """Sequential demand-only simulation with independent GPU chunks."""
+        tasks, cfg = self.tasks, self.config
+
+        sizes = {}
+        for task in tasks:
+            for a in task.accesses:
+                if a.size_bytes <= 0:
+                    raise SimulationError(f"Invalid size for {a.handle}")
+                if a.handle in sizes and sizes[a.handle] != a.size_bytes:
+                    raise SimulationError(f"Inconsistent size for {a.handle}")
+                sizes[a.handle] = a.size_bytes
+
+        chunks_by_handle = self._build_chunks(sizes)
+        chunks = {
+            chunk.key: chunk
+            for handle_chunks in chunks_by_handle.values()
+            for chunk in handle_chunks
+        }
+
+        # Future uses and remaining accesses are tracked per chunk.
+        future_uses = defaultdict(deque)
+        remaining = defaultdict(int)
+
+        for task_idx, task in enumerate(tasks):
+            for handle in {a.handle for a in task.accesses}:
+                for chunk in chunks_by_handle[handle]:
+                    remaining[chunk.key] += 1
+                    future_uses[chunk.key].append(task_idx)
+
+        # A handle's first access determines its initial CPU availability.
+        first = {}
+        for task in tasks:
+            for a in task.accesses:
+                first.setdefault(a.handle, a.reads_previous_value)
+
+        cpu = {
+            chunk.key
+            for handle, handle_chunks in chunks_by_handle.items()
+            if first[handle]
+            for chunk in handle_chunks
+        }
+
+        gpu = set()
+        dirty = set()
+        last_touch = {}
+
+        clock = 0
+        now = 0.0
+        used = peak = h2d_bytes = d2h_bytes = 0
+        events = []
+
+        def emit(lane, action, handle, job, duration):
+            nonlocal now
+            start = now
+            now += duration
+            events.append(
+                Event(lane, action, handle, job, start, now, used)
+            )
+
+        def chunk_name(key):
+            return f"{key[0]}:{key[1]}"
+
+        for task_idx, task in enumerate(tasks):
+            accesses = {a.handle: a for a in task.accesses}
+
+            required = {
+                chunk.key
+                for handle in accesses
+                for chunk in chunks_by_handle[handle]
+            }
+
+            required_size = sum(
+                chunks[key].reserved_bytes for key in required
+            )
+
+            if required_size > cfg.capacity_bytes:
+                raise SimulationError(
+                    f"Task {task.job_id} requires more GPU memory than capacity"
+                )
+
+            for key in required:
+                assert future_uses[key][0] == task_idx
+                future_uses[key].popleft()
+
+            # Stable order of chunk preparation.
+            for key in sorted(required):
+                if key in gpu:
+                    continue
+
+                chunk = chunks[key]
+
+                while used + chunk.reserved_bytes > cfg.capacity_bytes:
+                    candidates = gpu - required
+
+                    if not candidates:
+                        raise SimulationError(
+                            f"No evictable data before task {task.job_id}"
+                        )
+
+                    if policy == "belady-demand":
+                        victim = max(
+                            candidates,
+                            key=lambda k: (
+                                future_uses[k][0]
+                                if future_uses[k]
+                                else float("inf"),
+                                -chunks[k].size_bytes,
+                                k,
+                            ),
+                        )
+                    else:
+                        victim = min(
+                            candidates,
+                            key=lambda k: (
+                                last_touch.get(k, -1),
+                                chunks[k].size_bytes,
+                                k,
+                            ),
+                        )
+
+                    victim_chunk = chunks[victim]
+
+                    if victim in dirty and remaining[victim] > 0:
+                        d2h_bytes += victim_chunk.size_bytes
+
+                        start = now
+                        now += (
+                            victim_chunk.size_bytes
+                            / cfg.d2h_bytes_per_us
+                        )
+
+                        cpu.add(victim)
+                        gpu.remove(victim)
+                        dirty.discard(victim)
+                        used -= victim_chunk.reserved_bytes
+
+                        events.append(
+                            Event(
+                                "D2H",
+                                "UNLOAD",
+                                chunk_name(victim),
+                                None,
+                                start,
+                                now,
+                                used,
+                            )
+                        )
+                    else:
+                        gpu.remove(victim)
+                        dirty.discard(victim)
+                        used -= victim_chunk.reserved_bytes
+
+                    events.append(
+                        Event(
+                            "Memory",
+                            "DROP",
+                            chunk_name(victim),
+                            None,
+                            now,
+                            now,
+                            used,
+                        )
+                    )
+
+                used += chunk.reserved_bytes
+                peak = max(peak, used)
+                gpu.add(key)
+
+                access = accesses[key[0]]
+
+                if access.reads_previous_value:
+                    if key not in cpu:
+                        raise SimulationError(
+                            f"No valid version of {chunk_name(key)} "
+                            f"before task {task.job_id}"
+                        )
+
+                    h2d_bytes += chunk.size_bytes
+
+                    emit(
+                        "H2D",
+                        "LOAD",
+                        chunk_name(key),
+                        None,
+                        chunk.size_bytes / cfg.h2d_bytes_per_us,
+                    )
+                else:
+                    events.append(
+                        Event(
+                            "Memory",
+                            "ALLOC",
+                            chunk_name(key),
+                            None,
+                            now,
+                            now,
+                            used,
+                        )
+                    )
+
+            emit(
+                "Compute",
+                task.name,
+                None,
+                task.job_id,
+                task.duration_us,
+            )
+
+            clock += 1
+            for key in sorted(required):
+                last_touch[key] = clock
+                remaining[key] -= 1
+
+                if accesses[key[0]].writes_value:
+                    dirty.add(key)
+                    cpu.discard(key)
+
+        return SimulationResult(
+            events,
+            now,
+            peak,
+            h2d_bytes,
+            d2h_bytes,
+            len(tasks),
+        )
+
     def run(self) -> SimulationResult:
-        if self.config.memory_policy == 'lru-demand':
-            return self._run_demand('lru-demand')
-        if self.config.memory_policy == 'belady-demand':
-            return self._run_demand('belady-demand')
+        if self.config.memory_policy in ('lru-demand', 'belady-demand'):
+            if self.config.chunk_size_bytes is not None:
+                return self._run_chunked_demand(self.config.memory_policy)
+            return self._run_demand(self.config.memory_policy)
+
         if self.config.memory_policy == 'legacy-baseline':
             return self._run_legacy()
+
         raise SimulationError('Unknown memory policy')
 
     def _build_future_uses(self):
@@ -109,6 +348,22 @@ class Simulator:
                 future_uses[handle].append(task_idx)
 
         return future_uses
+
+    def _build_chunks(
+        self,
+        sizes: dict[str, int],
+    ) -> dict[str, tuple[Chunk, ...]]:
+        """Build placement units for all handles."""
+        chunk_size = self.config.chunk_size_bytes
+
+        return {
+            handle: split_into_chunks(
+                handle,
+                size,
+                chunk_size if chunk_size is not None else size,
+            )
+            for handle, size in sizes.items()
+        }
 
     def _run_demand(self, policy: str) -> SimulationResult:
         """Sequential demand-only execution with LRU eviction; no future-task transfers.

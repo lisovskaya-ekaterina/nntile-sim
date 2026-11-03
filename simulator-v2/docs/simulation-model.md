@@ -79,6 +79,86 @@ The current policy does not consider object sizes or transfer costs when ranking
 
 Size-aware and cost-aware eviction policies are future research directions.
 
+## Chunk-aware demand-only simulation
+
+The simulator optionally supports fixed-size GPU chunks for the `lru-demand` and `belady-demand` policies.
+
+Chunking is enabled by setting `Config.chunk_size_bytes` to a positive integer. When `chunk_size_bytes=None`, the original handle-level demand-only implementation is used without modification.
+
+The `legacy-baseline` policy does not support chunking.
+
+### Chunk representation
+
+Each data handle is divided into independently managed chunks.
+
+For a handle of size `S` and a configured chunk size `C`:
+
+- The number of chunks is `ceil(S / C)`.
+- Each chunk reserves exactly `C` bytes of GPU memory.
+- The final chunk may contain fewer than `C` bytes of actual data.
+- H2D and D2H transfer durations use actual payload bytes.
+- GPU capacity and peak memory usage use reserved bytes.
+
+For example, a 10-byte handle with a 4-byte chunk size produces three chunks with payload sizes 4, 4, and 2 bytes. Their combined GPU reservation is 12 bytes.
+
+Chunks are identified internally by `(handle, chunk_index)`. Transfer and memory events use names such as `A:0`, `A:1`, and `A:2`.
+
+### Compute requirements
+
+Each Compute task accesses all chunks of every handle listed in its trace accesses.
+
+A Compute task may start only when all required chunks are GPU-resident.
+
+The total reserved memory of the task's required chunks must not exceed GPU capacity. Otherwise, simulation raises `SimulationError`.
+
+Chunks required by the current Compute task are protected from eviction during task preparation.
+
+Chunking does not enable streaming execution of Compute tasks.
+
+### Chunk residency and data transfers
+
+Each chunk independently tracks:
+
+- CPU availability
+- GPU residency
+- Dirty state
+- Remaining accesses
+- Eviction priority
+
+Read accesses load only missing chunks from CPU.
+
+Write-only `W` accesses allocate missing chunks without H2D.
+
+A dirty chunk with future accesses is written back to CPU before eviction. A dirty chunk with no future accesses may be discarded without writeback.
+
+Evicting one chunk does not require evicting other chunks belonging to the same handle.
+
+### Chunk-aware eviction
+
+Both demand-only policies operate on individual resident chunks.
+
+**LRU:** Evicts the chunk with the oldest Compute access. Ties are resolved deterministically by the `(handle, chunk_index)` key, choosing the smallest key.
+
+**Belady:** Evicts the chunk whose next Compute access is farthest in the future. Chunks with no future accesses have the highest eviction priority. Ties are resolved deterministically by the `(handle, chunk_index)` key, choosing the largest key.
+
+Because each Compute access requires the entire handle, all chunks of that handle share the same future Compute-use sequence.
+
+The current tie-breaking rules do not optimize transfer cost. In particular, Belady may prefer a partial final chunk when next-use indices are equal.
+
+### Execution model and limitations
+
+Chunk-aware demand-only simulation remains sequential:
+
+- Missing chunks are prepared before Compute.
+- H2D, D2H, and Compute do not overlap.
+- Transfers are initiated only for the current Compute task.
+- No speculative prefetch or proactive eviction is performed.
+- One chunk is transferred or evicted at a time.
+
+The model supports partial handle residency between Compute tasks, but requires full residency of each task's working set before Compute starts.
+
+Concurrent transfers, asynchronous execution, and prefetch-aware scheduling are planned for subsequent milestones.
+
 ## LRU vs Belady experiments
 
 Experiments were performed on `tasks_mbs1.rec` with:
