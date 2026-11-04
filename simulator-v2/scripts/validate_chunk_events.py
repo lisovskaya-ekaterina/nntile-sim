@@ -6,12 +6,57 @@ import csv
 from collections import Counter
 from pathlib import Path
 
+from nntile_sim.chunks import split_into_chunks
+from nntile_sim.parser import parse_tasks
+
 MIB = 1024 ** 2
 
 
-def validate(path: Path, capacity_mib: int, chunk_mib: int) -> None:
+def validate(
+    path: Path,
+    capacity_mib: int,
+    chunk_mib: int,
+    chunk_allocation: str = "fixed-slot",
+    trace: Path | None = None,
+) -> None:
     capacity = capacity_mib * MIB
     chunk_size = chunk_mib * MIB
+
+    if capacity <= 0:
+        raise ValueError("GPU capacity must be positive")
+    if chunk_size <= 0:
+        raise ValueError("Chunk size must be positive")
+    if chunk_allocation not in ("fixed-slot", "exact-size"):
+        raise ValueError("Unknown chunk allocation mode")
+    if chunk_allocation == "exact-size" and trace is None:
+        raise ValueError("--trace is required for exact-size")
+
+    chunk_sizes = {}
+    expected_compute_count = 5484  # Legacy default for tasks_mbs1.rec
+
+    if trace is not None:
+        tasks = parse_tasks(trace)
+        expected_compute_count = len(tasks)
+
+        sizes = {}
+        for task in tasks:
+            for access in task.accesses:
+                previous = sizes.setdefault(
+                    access.handle,
+                    access.size_bytes,
+                )
+                if previous != access.size_bytes:
+                    raise ValueError(
+                        f"Inconsistent size for {access.handle}"
+                    )
+
+        chunk_sizes = {
+            f"{chunk.handle}:{chunk.index}": chunk.size_bytes
+            for handle, size in sizes.items()
+            for chunk in split_into_chunks(
+                handle, size, chunk_size
+            )
+        }
 
     with path.open(newline="", encoding="utf-8") as file:
         events = list(csv.DictReader(file))
@@ -32,6 +77,7 @@ def validate(path: Path, capacity_mib: int, chunk_mib: int) -> None:
 
         counts[(lane, action)] += 1
 
+        # Sequential simulation: events must not overlap.
         assert start <= end + 1e-5, (
             i, "Negative event duration"
         )
@@ -40,12 +86,16 @@ def validate(path: Path, capacity_mib: int, chunk_mib: int) -> None:
         )
         previous_end = max(previous_end, end)
 
+        # A dirty eviction emits D2H/UNLOAD followed by Memory/DROP.
         if pending_drop is not None:
             assert (lane, action) == ("Memory", "DROP"), (
                 i, "Expected DROP after UNLOAD", pending_drop
             )
             assert handle == pending_drop, (
-                i, "DROP handle differs from UNLOAD", handle, pending_drop
+                i,
+                "DROP handle differs from UNLOAD",
+                handle,
+                pending_drop,
             )
 
         if (lane, action) in (
@@ -55,6 +105,12 @@ def validate(path: Path, capacity_mib: int, chunk_mib: int) -> None:
             assert handle not in resident, (
                 i, "Chunk already resident", handle
             )
+
+            if chunk_sizes:
+                assert handle in chunk_sizes, (
+                    i, "Unknown chunk", handle
+                )
+
             resident.add(handle)
 
         elif (lane, action) == ("D2H", "UNLOAD"):
@@ -79,7 +135,14 @@ def validate(path: Path, capacity_mib: int, chunk_mib: int) -> None:
                 (i, "Unexpected event", lane, action)
             )
 
-        expected_used = len(resident) * chunk_size
+        # Reconstruct GPU occupancy independently of the simulator.
+        if chunk_allocation == "exact-size":
+            expected_used = sum(
+                chunk_sizes[key]
+                for key in resident
+            )
+        else:
+            expected_used = len(resident) * chunk_size
 
         assert used == expected_used, (
             i,
@@ -104,11 +167,14 @@ def validate(path: Path, capacity_mib: int, chunk_mib: int) -> None:
         if lane == "Compute"
     )
 
-    assert compute_count == 5484, (
-        "Unexpected Compute count", compute_count
+    assert compute_count == expected_compute_count, (
+        "Unexpected Compute count",
+        compute_count,
+        expected_compute_count,
     )
 
     print(f"File: {path}")
+    print(f"Allocation mode: {chunk_allocation}")
     print(f"Events: {len(events)}")
     print(f"Compute: {compute_count}")
     print(f"Peak GPU: {peak / MIB:.3f} MiB")
@@ -117,13 +183,40 @@ def validate(path: Path, capacity_mib: int, chunk_mib: int) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="Validate chunked simulator event CSV files"
+    )
     parser.add_argument("csv_file", type=Path)
-    parser.add_argument("--capacity-mib", type=int, required=True)
-    parser.add_argument("--chunk-mib", type=int, required=True)
+    parser.add_argument(
+        "--capacity-mib",
+        type=int,
+        required=True,
+    )
+    parser.add_argument(
+        "--chunk-mib",
+        type=int,
+        required=True,
+    )
+    parser.add_argument(
+        "--chunk-allocation",
+        choices=("fixed-slot", "exact-size"),
+        default="fixed-slot",
+    )
+    parser.add_argument(
+        "--trace",
+        type=Path,
+        help="Source .rec trace (required for exact-size)",
+    )
+
     args = parser.parse_args()
 
-    validate(args.csv_file, args.capacity_mib, args.chunk_mib)
+    validate(
+        path=args.csv_file,
+        capacity_mib=args.capacity_mib,
+        chunk_mib=args.chunk_mib,
+        chunk_allocation=args.chunk_allocation,
+        trace=args.trace,
+    )
 
 
 if __name__ == "__main__":

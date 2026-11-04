@@ -1,5 +1,6 @@
+import pytest
 from nntile_sim.model import Access, Task
-from nntile_sim.core.engine import Config, Simulator
+from nntile_sim.core.engine import Config, Simulator, SimulationError
 
 
 def make_task(i, handle, size):
@@ -279,3 +280,65 @@ def test_belady_prefers_smallest_chunk_on_equal_next_use():
     assert result.h2d_bytes == 16
     assert result.d2h_bytes == 0
     assert result.peak_bytes == 12
+
+def test_exact_size_allocation_fits_partial_chunk():
+    tasks = [make_task(0, "A", 10)]
+
+    def run(allocation):
+        return Simulator(
+            tasks,
+            Config(
+                capacity_bytes=10,
+                chunk_size_bytes=4,
+                chunk_allocation=allocation,
+                h2d_bytes_per_us=1.0,
+                d2h_bytes_per_us=1.0,
+                compute_order="trace",
+                memory_policy="belady-demand",
+            ),
+        ).run()
+
+    # Fixed-slot: three chunks reserve 4 + 4 + 4 = 12 bytes.
+    # They cannot fit into a GPU with capacity 10 bytes.
+    with pytest.raises(SimulationError):
+        run("fixed-slot")
+
+    # Exact-size: the same chunks reserve 4 + 4 + 2 = 10 bytes.
+    result = run("exact-size")
+
+    assert result.completed_jobs == 1
+    assert result.peak_bytes == 10
+    assert result.h2d_bytes == 10
+    assert result.d2h_bytes == 0
+
+def test_exact_size_partial_chunk_eviction():
+    tasks = [
+        make_task(0, "A", 10),
+        make_task(1, "B", 4),
+        make_task(2, "A", 10),
+    ]
+
+    result = Simulator(
+        tasks,
+        Config(
+            capacity_bytes=10,
+            chunk_size_bytes=4,
+            chunk_allocation="exact-size",
+            h2d_bytes_per_us=1.0,
+            d2h_bytes_per_us=1.0,
+            compute_order="trace",
+            memory_policy="lru-demand",
+        ),
+    ).run()
+
+    assert result.completed_jobs == 3
+    assert result.peak_bytes == 10
+    assert result.h2d_bytes == 20
+    assert result.d2h_bytes == 0
+
+    drops = [
+        e.handle
+        for e in result.events
+        if e.lane == "Memory" and e.action == "DROP"
+    ]
+    assert drops == ["A:2", "A:0", "B:0"]

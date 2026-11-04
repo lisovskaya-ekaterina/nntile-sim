@@ -25,6 +25,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Fixed GPU chunk size in MiB (default: chunking disabled)",
     )
+    parser.add_argument(
+        "--chunk-allocation",
+        choices=("fixed-slot", "exact-size"),
+        default="fixed-slot",
+        help="GPU allocation model for chunks (default: fixed-slot)",
+    )
     parser.add_argument("--h2d-gbps", type=float, required=True, help="CPU-to-GPU bandwidth in decimal GB/s")
     parser.add_argument("--d2h-gbps", type=float, required=True, help="GPU-to-CPU bandwidth in decimal GB/s")
     parser.add_argument(
@@ -70,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
                 if args.chunk_size_mib is not None
                 else None
             ),
+            chunk_allocation=args.chunk_allocation,
         )
         result = Simulator(tasks, config).run()
         if args.events_csv is not None:
@@ -89,6 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Compute order: {args.compute_order}")
     if config.chunk_size_bytes is not None:
         print(f"Chunk size: {config.chunk_size_bytes / MIB:g} MiB")
+        print(f"Chunk allocation: {config.chunk_allocation}")
     print(f"Completed tasks: {result.completed_jobs:,} / {len(tasks):,}")
     print(f"Makespan: {result.makespan_us:,.3f} us ({result.makespan_us / 1e6:,.6f} s)")
     print(f"Peak GPU memory: {result.peak_bytes / MIB:,.3f} MiB")

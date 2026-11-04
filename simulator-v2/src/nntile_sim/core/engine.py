@@ -6,7 +6,6 @@ Baseline policy: prepare the next compute task, transfer one missing input at a
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from collections import defaultdict
 from collections import defaultdict, deque
 from heapq import heappush, heappop
 from typing import Sequence
@@ -25,6 +24,7 @@ class Config:
     custom_order: tuple[str, ...] | None = None
     memory_policy: str = 'lru-demand'
     chunk_size_bytes: int | None = None
+    chunk_allocation: str = "fixed-slot"
 
     def __post_init__(self):
         if self.memory_policy not in (
@@ -37,6 +37,11 @@ class Config:
             raise ValueError('Capacity and bandwidths must be positive')
         if self.chunk_size_bytes is not None and self.chunk_size_bytes <= 0:
             raise ValueError('Chunk size must be positive')
+        if self.chunk_allocation not in ("fixed-slot", "exact-size"):
+            raise ValueError("Unknown chunk allocation mode")
+
+        if self.chunk_allocation == "exact-size" and self.chunk_size_bytes is None:
+            raise ValueError("Exact-size allocation requires chunking")
         if (
             self.memory_policy == "legacy-baseline"
             and self.chunk_size_bytes is not None
@@ -122,6 +127,12 @@ class Simulator:
             for chunk in handle_chunks
         }
 
+        def allocation_bytes(key):
+            chunk = chunks[key]
+            if cfg.chunk_allocation == "exact-size":
+                return chunk.size_bytes
+            return chunk.reserved_bytes
+
         # Future uses and remaining accesses are tracked per chunk.
         future_uses = defaultdict(deque)
         remaining = defaultdict(int)
@@ -175,7 +186,7 @@ class Simulator:
             }
 
             required_size = sum(
-                chunks[key].reserved_bytes for key in required
+                allocation_bytes(key) for key in required
             )
 
             if required_size > cfg.capacity_bytes:
@@ -194,7 +205,7 @@ class Simulator:
 
                 chunk = chunks[key]
 
-                while used + chunk.reserved_bytes > cfg.capacity_bytes:
+                while used + allocation_bytes(key) > cfg.capacity_bytes:
                     candidates = gpu - required
 
                     if not candidates:
@@ -237,7 +248,7 @@ class Simulator:
                         cpu.add(victim)
                         gpu.remove(victim)
                         dirty.discard(victim)
-                        used -= victim_chunk.reserved_bytes
+                        used -= allocation_bytes(victim)
 
                         events.append(
                             Event(
@@ -253,7 +264,7 @@ class Simulator:
                     else:
                         gpu.remove(victim)
                         dirty.discard(victim)
-                        used -= victim_chunk.reserved_bytes
+                        used -= allocation_bytes(victim)
 
                     events.append(
                         Event(
@@ -267,7 +278,7 @@ class Simulator:
                         )
                     )
 
-                used += chunk.reserved_bytes
+                used += allocation_bytes(key)
                 peak = max(peak, used)
                 gpu.add(key)
 
