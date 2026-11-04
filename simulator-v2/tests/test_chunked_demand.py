@@ -342,3 +342,37 @@ def test_exact_size_partial_chunk_eviction():
         if e.lane == "Memory" and e.action == "DROP"
     ]
     assert drops == ["A:2", "A:0", "B:0"]
+
+def test_exact_size_chunked_lru_differs_from_object_lru():
+    tasks = [
+        make_task(0, "A", 6),
+        make_task(1, "B", 4),
+        make_task(2, "C", 4),
+        make_task(3, "A", 6),
+    ]
+
+    def run(chunk_size):
+        return Simulator(
+            tasks,
+            Config(
+                capacity_bytes=10,
+                chunk_size_bytes=chunk_size,
+                chunk_allocation="exact-size" if chunk_size else "fixed-slot",
+                h2d_bytes_per_us=1.0,
+                d2h_bytes_per_us=1.0,
+                compute_order="trace",
+                memory_policy="lru-demand",
+            ),
+        ).run()
+
+    object_lru = run(None)
+    chunked_lru = run(2)
+
+    assert object_lru.completed_jobs == 4
+    assert chunked_lru.completed_jobs == 4
+
+    assert object_lru.h2d_bytes == 20
+    assert chunked_lru.h2d_bytes == 18
+
+    assert object_lru.peak_bytes <= 10
+    assert chunked_lru.peak_bytes <= 10
