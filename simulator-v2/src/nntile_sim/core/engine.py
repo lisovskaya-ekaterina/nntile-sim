@@ -25,6 +25,7 @@ class Config:
     memory_policy: str = 'lru-demand'
     chunk_size_bytes: int | None = None
     chunk_allocation: str = "fixed-slot"
+    prefetch_depth: int = 0
 
     def __post_init__(self):
         if self.memory_policy not in (
@@ -39,6 +40,8 @@ class Config:
             raise ValueError('Chunk size must be positive')
         if self.chunk_allocation not in ("fixed-slot", "exact-size"):
             raise ValueError("Unknown chunk allocation mode")
+        if type(self.prefetch_depth) is not int or self.prefetch_depth < 0:
+            raise ValueError("Prefetch depth must be a non-negative integer")
 
         if self.chunk_allocation == "exact-size" and self.chunk_size_bytes is None:
             raise ValueError("Exact-size allocation requires chunking")
@@ -340,6 +343,11 @@ class Simulator:
         )
 
     def run(self) -> SimulationResult:
+        if self.config.prefetch_depth > 0:
+            raise SimulationError(
+                "Prefetch is not implemented yet; use prefetch_depth=0"
+            )
+
         if self.config.memory_policy in ('lru-demand', 'belady-demand'):
             if self.config.chunk_size_bytes is not None:
                 return self._run_chunked_demand(self.config.memory_policy)
