@@ -343,7 +343,7 @@ class Simulator:
         )
 
     def _run_prefetch(self) -> SimulationResult:
-        """Minimal event-driven one-task prefetch, without eviction."""
+        """One-task lookahead with asynchronous transfers and safe eviction."""
         tasks, cfg = self.tasks, self.config
 
         if cfg.chunk_size_bytes is not None:
@@ -406,7 +406,7 @@ class Simulator:
         def needs_writeback(handle):
             return handle in dirty and bool(future_uses[handle])
 
-        def evict_one(protected):
+        def evict_one(protected, speculative=False):
             nonlocal used, d2h, d2h_bytes
 
             if d2h is not None:
@@ -439,6 +439,11 @@ class Simulator:
                     ),
                 )
 
+            if speculative and not needs_writeback(victim):
+                # Keep clean evictions demand-driven; do not change
+                # LRU/Belady decisions merely for lookahead.
+                return False
+
             if needs_writeback(victim):
                 duration = sizes[victim] / cfg.d2h_bytes_per_us
                 d2h = (now + duration, victim, now)
@@ -470,15 +475,14 @@ class Simulator:
                 protected |= required(running)
 
             while used + sizes[handle] > cfg.capacity_bytes:
-                if speculative:
-                    # Do not evict data just to speculate.
-                    return False
-
                 if d2h is not None:
+                    # The victim still occupies GPU memory until D2H completes.
                     return False
 
-                if not evict_one(protected):
-                    if d2h is not None:
+                if not evict_one(protected, speculative=speculative):
+                    if d2h is not None or speculative:
+                        # A speculative eviction may start D2H, but must not
+                        # stall the currently running Compute task.
                         return False
 
                     raise SimulationError(
@@ -540,7 +544,8 @@ class Simulator:
             if running is None and next_idx < len(tasks):
                 prepare(tasks[next_idx])
 
-                if required(tasks[next_idx]) <= gpu:
+                unloading = {d2h[1]} if d2h is not None else set()
+                if required(tasks[next_idx]) <= gpu - unloading:
                     consume_future_uses(next_idx)
 
                     running = tasks[next_idx]
@@ -558,7 +563,9 @@ class Simulator:
                     )
                     next_idx += 1
 
-            # Look ahead by one task while Compute is running.
+            # Prepare the immediate successor while Compute runs. If it
+            # cannot fit, evict only data unused by both tasks; a live dirty
+            # victim starts asynchronous D2H without blocking Compute.
             if running is not None and next_idx < len(tasks):
                 prepare(tasks[next_idx], speculative=True)
 

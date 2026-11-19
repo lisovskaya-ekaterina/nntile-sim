@@ -1,5 +1,4 @@
 from nntile_sim.model import Task, Access
-from nntile_sim.core import Simulator, Config
 from nntile_sim.core.engine import Config, Simulator, SimulationError
 import pytest
 
@@ -324,3 +323,75 @@ def test_prefetch_rejects_task_larger_than_gpu_capacity():
         match="No evictable data|exceeds GPU capacity",
     ):
         Simulator(tasks, config).run()
+
+@pytest.mark.parametrize("policy", ["lru-demand", "belady-demand"])
+def test_prefetch_overlaps_live_dirty_d2h_with_compute(policy):
+    tasks = [
+        task("1", [("a", 40, "W")]),
+        task("2", [("b", 40, "R")], deps=("1",), duration=40),
+        task("3", [("c", 40, "R")], deps=("2",)),
+        task("4", [("a", 40, "R")], deps=("3",)),
+    ]
+    config = Config(
+        capacity_bytes=80,
+        h2d_bytes_per_us=10,
+        d2h_bytes_per_us=5,
+        memory_policy=policy,
+        prefetch_depth=1,
+    )
+
+    result = Simulator(tasks, config).run()
+    compute_b = next(
+        e for e in result.events
+        if e.lane == "Compute" and e.job_id == "2"
+    )
+    writeback_a = next(
+        e for e in result.events
+        if e.lane == "D2H" and e.handle == "a"
+    )
+    load_c = next(
+        e for e in result.events
+        if e.lane == "H2D" and e.handle == "c"
+    )
+    reload_a = next(
+        e for e in result.events
+        if e.lane == "H2D" and e.handle == "a"
+    )
+
+    assert compute_b.start_us <= writeback_a.start_us
+    assert writeback_a.end_us <= compute_b.end_us
+    assert writeback_a.end_us <= load_c.start_us
+    assert load_c.end_us <= compute_b.end_us
+    assert reload_a.start_us >= writeback_a.end_us
+    assert result.completed_jobs == 4
+    assert result.d2h_bytes == 40
+    assert result.peak_bytes <= config.capacity_bytes
+
+
+def test_prefetch_does_not_evict_running_compute_input():
+    tasks = [
+        task("1", [("a", 40, "W")]),
+        task("2", [("a", 40, "R"), ("b", 40, "R")], deps=("1",), duration=40),
+        task("3", [("c", 40, "R")], deps=("2",)),
+        task("4", [("a", 40, "R")], deps=("3",)),
+    ]
+    config = Config(
+        capacity_bytes=80,
+        h2d_bytes_per_us=10,
+        d2h_bytes_per_us=5,
+        memory_policy="lru-demand",
+        prefetch_depth=1,
+    )
+
+    result = Simulator(tasks, config).run()
+    compute = next(
+        e for e in result.events
+        if e.lane == "Compute" and e.job_id == "2"
+    )
+    assert all(
+        e.start_us >= compute.end_us
+        for e in result.events
+        if e.lane == "D2H" and e.handle == "a"
+    )
+    assert result.completed_jobs == 4
+    assert result.peak_bytes <= config.capacity_bytes
