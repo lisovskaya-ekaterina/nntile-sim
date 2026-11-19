@@ -26,6 +26,7 @@ class Config:
     chunk_size_bytes: int | None = None
     chunk_allocation: str = "fixed-slot"
     prefetch_depth: int = 0
+    chunk_sizes_by_handle: tuple[tuple[str, int], ...] | None = None
 
     def __post_init__(self):
         if self.memory_policy not in (
@@ -38,16 +39,29 @@ class Config:
             raise ValueError('Capacity and bandwidths must be positive')
         if self.chunk_size_bytes is not None and self.chunk_size_bytes <= 0:
             raise ValueError('Chunk size must be positive')
+        if self.chunk_sizes_by_handle is not None:
+            if not isinstance(self.chunk_sizes_by_handle, tuple):
+                raise ValueError("chunk_sizes_by_handle must be a tuple of (handle, size) pairs")
+            seen = set()
+            for pair in self.chunk_sizes_by_handle:
+                if not isinstance(pair, tuple) or len(pair) != 2:
+                    raise ValueError("Invalid per-handle chunk entry")
+                handle, size = pair
+                if not isinstance(handle, str) or not handle or handle in seen:
+                    raise ValueError("Invalid or duplicate chunk handle")
+                if type(size) is not int or size <= 0:
+                    raise ValueError("Per-handle chunk sizes must be positive integers")
+                seen.add(handle)
         if self.chunk_allocation not in ("fixed-slot", "exact-size"):
             raise ValueError("Unknown chunk allocation mode")
         if type(self.prefetch_depth) is not int or self.prefetch_depth < 0:
             raise ValueError("Prefetch depth must be a non-negative integer")
 
-        if self.chunk_allocation == "exact-size" and self.chunk_size_bytes is None:
+        if self.chunk_allocation == "exact-size" and self.chunk_size_bytes is None and self.chunk_sizes_by_handle is None:
             raise ValueError("Exact-size allocation requires chunking")
         if (
             self.memory_policy == "legacy-baseline"
-            and self.chunk_size_bytes is not None
+            and (self.chunk_size_bytes is not None or self.chunk_sizes_by_handle is not None)
         ):
             raise ValueError(
                 "Chunking is not supported for legacy-baseline"
@@ -346,7 +360,7 @@ class Simulator:
         """One-task lookahead with asynchronous transfers and safe eviction."""
         tasks, cfg = self.tasks, self.config
 
-        if cfg.chunk_size_bytes is not None:
+        if cfg.chunk_size_bytes is not None or cfg.chunk_sizes_by_handle is not None:
             raise SimulationError(
                 "Chunked prefetch is not implemented yet"
             )
@@ -646,7 +660,7 @@ class Simulator:
             return self._run_prefetch()
 
         if self.config.memory_policy in ('lru-demand', 'belady-demand'):
-            if self.config.chunk_size_bytes is not None:
+            if self.config.chunk_size_bytes is not None or self.config.chunk_sizes_by_handle is not None:
                 return self._run_chunked_demand(self.config.memory_policy)
             return self._run_demand(self.config.memory_policy)
 
@@ -671,12 +685,16 @@ class Simulator:
     ) -> dict[str, tuple[Chunk, ...]]:
         """Build placement units for all handles."""
         chunk_size = self.config.chunk_size_bytes
+        overrides = dict(self.config.chunk_sizes_by_handle or ())
+        unknown = set(overrides) - set(sizes)
+        if unknown:
+            raise SimulationError(f"Chunk plan references unknown handles: {sorted(unknown)!r}")
 
         return {
             handle: split_into_chunks(
                 handle,
                 size,
-                chunk_size if chunk_size is not None else size,
+                overrides.get(handle, chunk_size if chunk_size is not None else size),
             )
             for handle, size in sizes.items()
         }
