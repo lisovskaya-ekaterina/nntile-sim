@@ -222,3 +222,13 @@ prefetch or eviction independently.
   eviction policies remain future work.
 - Accurate GPU memory occupancy plots require timestamped
   allocation and release events.
+
+## Event-driven prefetch (implemented after the demand-only experiments)
+
+`Config.prefetch_depth=1` supports LRU and Belady with handle-level (non-chunked) memory management. The engine models independent Compute, H2D and D2H lanes and can overlap transfers with Compute. Prefetch and chunking are **not yet integrated**. The earlier statements about sequential chunk-aware execution remain applicable to chunked demand-only mode, not to the newer handle-level prefetch mode.
+
+The benchmark scripts `scripts/benchmark_prefetch.py` and `scripts/benchmark_nntile_graph.py` evaluate depth 0 against depth 1. The latter was run on `examples/tasks_mbs1.rec` (5,484 tasks) and `examples/tasks_mbs4.rec` (5,452 tasks), capacities 1,024/1,536/2,048 MiB and 12 GB/s in each transfer direction. All 24 configurations returned `ok`. Makespan improvement was about 0.06–0.38%, with substantial extra H2D traffic in some cases (about 59–71% on mbs1). See `docs/milestone6_3_1/`. These findings do not establish real-GPU speedups.
+
+## Planned: data-driven chunk-size selection
+
+Before changing allocation policy, measure distinct handle sizes, access-weighted size distributions, unique and repeated accesses, and the distribution of final-chunk slack under fixed-slot allocation. Evaluate candidate chunk sizes under both fixed-slot and exact-size allocation, reporting reserved-memory overhead and simulation metrics separately. The choice of a single global chunk size is a first step; per-handle adaptive chunk sizes require a separate design and validation. See `docs/handle-size-chunk-plan.md`.
