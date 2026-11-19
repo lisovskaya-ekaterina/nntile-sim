@@ -1,0 +1,7 @@
+case,policy,demand_makespan_us,prefetch_makespan_us,speedup,demand_h2d_bytes,prefetch_h2d_bytes,demand_d2h_bytes,prefetch_d2h_bytes,demand_peak_bytes,prefetch_peak_bytes
+h2d_overlap,lru-demand,58.0,54.0,1.0740740740740742,80,80,0,0,80,80
+h2d_overlap,belady-demand,58.0,54.0,1.0740740740740742,80,80,0,0,80,80
+capacity_limited,lru-demand,60.0,60.0,1.0,100,100,0,0,60,60
+capacity_limited,belady-demand,60.0,60.0,1.0,100,100,0,0,60,60
+dirty_reuse,lru-demand,90.0,74.0,1.2162162162162162,120,120,40,40,80,80
+dirty_reuse,belady-demand,78.0,74.0,1.054054054054054,80,120,0,40,80,80
