@@ -1,0 +1,74 @@
+{
+  "schema_version": "0.1-draft",
+  "time_unit": "us",
+  "operations": [
+    {
+      "id": "alloc_x",
+      "lane": "Memory",
+      "start_us": 0,
+      "end_us": 0
+    },
+    {
+      "id": "compute_t1",
+      "lane": "Compute",
+      "start_us": 0,
+      "end_us": 10
+    },
+    {
+      "id": "d2h_x",
+      "lane": "D2H",
+      "start_us": 10,
+      "end_us": 14
+    },
+    {
+      "id": "drop_x",
+      "lane": "Memory",
+      "start_us": 14,
+      "end_us": 14
+    },
+    {
+      "id": "h2d_y",
+      "lane": "H2D",
+      "start_us": 0,
+      "end_us": 4
+    },
+    {
+      "id": "h2d_z",
+      "lane": "H2D",
+      "start_us": 4,
+      "end_us": 8
+    },
+    {
+      "id": "compute_t2",
+      "lane": "Compute",
+      "start_us": 10,
+      "end_us": 20
+    },
+    {
+      "id": "drop_y",
+      "lane": "Memory",
+      "start_us": 20,
+      "end_us": 20
+    },
+    {
+      "id": "h2d_x",
+      "lane": "H2D",
+      "start_us": 20,
+      "end_us": 24
+    },
+    {
+      "id": "compute_t3",
+      "lane": "Compute",
+      "start_us": 24,
+      "end_us": 34
+    }
+  ],
+  "metrics": {
+    "makespan_us": 34,
+    "peak_gpu_bytes": 2359296,
+    "h2d_bytes": 2359296,
+    "d2h_bytes": 786432,
+    "completed_jobs": 3
+  },
+  "plan": "experiment-3slots-plan.json"
+}
