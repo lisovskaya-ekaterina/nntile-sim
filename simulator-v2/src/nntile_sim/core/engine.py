@@ -342,11 +342,301 @@ class Simulator:
             len(tasks),
         )
 
+    def _run_prefetch(self) -> SimulationResult:
+        """Minimal event-driven one-task prefetch, without eviction."""
+        tasks, cfg = self.tasks, self.config
+
+        if cfg.chunk_size_bytes is not None:
+            raise SimulationError(
+                "Chunked prefetch is not implemented yet"
+            )
+
+        sizes = {}
+        first_read = {}
+
+        for task in tasks:
+            for access in task.accesses:
+                handle = access.handle
+                if access.size_bytes <= 0:
+                    raise SimulationError("Invalid handle size")
+                if handle in sizes and sizes[handle] != access.size_bytes:
+                    raise SimulationError("Inconsistent handle size")
+                sizes[handle] = access.size_bytes
+                first_read.setdefault(handle, access.reads_previous_value)
+
+        cpu = {h for h, reads in first_read.items() if reads}
+        gpu = set()
+        reserved = set()
+        dirty = set()
+        last_touch = {}
+        future_uses = self._build_future_uses()
+
+        used = peak = h2d_bytes = 0
+        now = 0.0
+        events = []
+
+        # End time and handle of the active H2D transfer.
+        h2d = None
+        # Active D2H transfer: (end_time, handle, start_time).
+        d2h = None
+        d2h_bytes = 0
+
+        def required(task):
+            return {a.handle for a in task.accesses}
+
+        for task in tasks:
+            required_bytes = sum(
+                sizes[h] for h in required(task)
+            )
+
+            if required_bytes > cfg.capacity_bytes:
+                raise SimulationError(
+                    f"Task {task.job_id} requires "
+                    f"{required_bytes} bytes, "
+                    f"exceeds GPU capacity "
+                    f"{cfg.capacity_bytes} bytes"
+                )
+
+        def consume_future_uses(task_idx):
+            for h in required(tasks[task_idx]):
+                assert future_uses[h]
+                assert future_uses[h][0] == task_idx
+                future_uses[h].popleft()
+
+        def needs_writeback(handle):
+            return handle in dirty and bool(future_uses[handle])
+
+        def evict_one(protected):
+            nonlocal used, d2h, d2h_bytes
+
+            if d2h is not None:
+                return False
+
+            candidates = [
+                h for h in gpu - protected
+                if h not in reserved
+            ]
+
+            if not candidates:
+                return False
+
+            if cfg.memory_policy == "belady-demand":
+                victim = max(
+                    candidates,
+                    key=lambda h: (
+                        future_uses[h][0]
+                        if future_uses[h]
+                        else float("inf"),
+                        h,
+                    ),
+                )
+            else:
+                victim = min(
+                    candidates,
+                    key=lambda h: (
+                        last_touch.get(h, -1),
+                        h,
+                    ),
+                )
+
+            if needs_writeback(victim):
+                duration = sizes[victim] / cfg.d2h_bytes_per_us
+                d2h = (now + duration, victim, now)
+                d2h_bytes += sizes[victim]
+                return False
+
+            # Clean or dead dirty data can be dropped immediately.
+            gpu.remove(victim)
+            dirty.discard(victim)
+            used -= sizes[victim]
+
+            events.append(
+                Event("Memory", "DROP", victim, None, now, now, used)
+            )
+
+            return True
+
+        def ensure_space(handle, task, speculative):
+            nonlocal used
+
+            if sizes[handle] > cfg.capacity_bytes:
+                raise SimulationError(
+                    f"Handle {handle} exceeds GPU capacity"
+                )
+
+            protected = required(task)
+
+            if running is not None:
+                protected |= required(running)
+
+            while used + sizes[handle] > cfg.capacity_bytes:
+                if speculative:
+                    # Do not evict data just to speculate.
+                    return False
+
+                if d2h is not None:
+                    return False
+
+                if not evict_one(protected):
+                    if d2h is not None:
+                        return False
+
+                    raise SimulationError(
+                        f"No evictable data before task {task.job_id}"
+                    )
+
+            return True
+
+        def prepare(task, speculative=False):
+            nonlocal used, peak, h2d_bytes, h2d
+
+            for access in task.accesses:
+                h = access.handle
+
+                if h in gpu or h in reserved:
+                    continue
+
+                if h not in cpu:
+                    # Output-only allocation is permitted.
+                    if access.reads_previous_value:
+                        raise SimulationError(
+                            f"No valid version of {h}"
+                        )
+
+                    if not ensure_space(h, task, speculative):
+                        return
+
+                    used += sizes[h]
+                    peak = max(peak, used)
+                    gpu.add(h)
+                    continue
+
+                if h2d is not None:
+                    return
+
+                if not ensure_space(h, task, speculative):
+                    return
+
+                used += sizes[h]
+                peak = max(peak, used)
+                reserved.add(h)
+                h2d_bytes += sizes[h]
+
+                duration = sizes[h] / cfg.h2d_bytes_per_us
+                h2d = (now + duration, h, now)
+                return
+
+        next_idx = 0
+        running = None
+        compute_end = None
+        completed = 0
+
+        while (
+            next_idx < len(tasks)
+            or running is not None
+            or h2d is not None
+            or d2h is not None
+        ):
+            if running is None and next_idx < len(tasks):
+                prepare(tasks[next_idx])
+
+                if required(tasks[next_idx]) <= gpu:
+                    consume_future_uses(next_idx)
+
+                    running = tasks[next_idx]
+                    compute_end = now + running.duration_us
+                    events.append(
+                        Event(
+                            "Compute",
+                            running.name,
+                            None,
+                            running.job_id,
+                            now,
+                            compute_end,
+                            used,
+                        )
+                    )
+                    next_idx += 1
+
+            # Look ahead by one task while Compute is running.
+            if running is not None and next_idx < len(tasks):
+                prepare(tasks[next_idx], speculative=True)
+
+            times = [
+                t for t in (
+                    compute_end if running is not None else None,
+                    h2d[0] if h2d is not None else None,
+                    d2h[0] if d2h is not None else None,
+                )
+                if t is not None
+            ]
+
+            if not times:
+                if next_idx < len(tasks):
+                    raise SimulationError("Prefetch scheduler stalled")
+                break
+
+            now = min(times)
+
+            if d2h is not None and d2h[0] == now:
+                _, h, start = d2h
+
+                cpu.add(h)
+                gpu.remove(h)
+                dirty.discard(h)
+                used -= sizes[h]
+
+                events.append(
+                    Event("D2H", "UNLOAD", h, None, start, now, used)
+                )
+                events.append(
+                    Event("Memory", "DROP", h, None, now, now, used)
+                )
+
+                d2h = None
+
+            if h2d is not None and h2d[0] == now:
+                _, h, start = h2d
+                reserved.remove(h)
+                gpu.add(h)
+                events.append(
+                    Event("H2D", "LOAD", h, None, start, now, used)
+                )
+                h2d = None
+
+            if running is not None and compute_end == now:
+                completed += 1
+
+                for access in running.accesses:
+                    last_touch[access.handle] = completed
+
+                    if access.writes_value:
+                        dirty.add(access.handle)
+                        cpu.discard(access.handle)
+
+                running = None
+                compute_end = None
+
+        return SimulationResult(
+            events=events,
+            makespan_us=now,
+            peak_bytes=peak,
+            h2d_bytes=h2d_bytes,
+            d2h_bytes=d2h_bytes,
+            completed_jobs=completed,
+        )
+
     def run(self) -> SimulationResult:
         if self.config.prefetch_depth > 0:
-            raise SimulationError(
-                "Prefetch is not implemented yet; use prefetch_depth=0"
-            )
+            if self.config.prefetch_depth != 1:
+                raise SimulationError(
+                    "Only prefetch_depth=1 is supported currently"
+                )
+            if self.config.memory_policy == "legacy-baseline":
+                raise SimulationError(
+                    "Prefetch depth is not configurable for legacy-baseline"
+                )
+            return self._run_prefetch()
 
         if self.config.memory_policy in ('lru-demand', 'belady-demand'):
             if self.config.chunk_size_bytes is not None:

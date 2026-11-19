@@ -29,13 +29,42 @@ def test_invalid_prefetch_depth(depth):
         make_config(prefetch_depth=depth)
 
 
-@pytest.mark.parametrize("policy", ["lru-demand", "belady-demand", "legacy-baseline"])
-def test_prefetch_not_implemented_yet(policy):
+@pytest.mark.parametrize("policy", ["lru-demand", "belady-demand"])
+def test_prefetch_engine_runs(policy):
     config = make_config(
         memory_policy=policy,
         prefetch_depth=1,
     )
-    simulator = Simulator([], config)
 
-    with pytest.raises(SimulationError, match="Prefetch is not implemented"):
-        simulator.run()
+    result = Simulator([], config).run()
+
+    assert result.completed_jobs == 0
+    assert result.makespan_us == 0
+    assert result.peak_bytes == 0
+    assert result.h2d_bytes == 0
+    assert result.d2h_bytes == 0
+    assert result.events == []
+
+
+def test_legacy_prefetch_depth_not_configurable():
+    config = make_config(
+        memory_policy="legacy-baseline",
+        prefetch_depth=1,
+    )
+
+    with pytest.raises(
+        SimulationError,
+        match="Prefetch depth is not configurable",
+    ):
+        Simulator([], config).run()
+
+
+@pytest.mark.parametrize("depth", [2, 4, 8])
+def test_deeper_prefetch_not_supported_yet(depth):
+    config = make_config(prefetch_depth=depth)
+
+    with pytest.raises(
+        SimulationError,
+        match="Only prefetch_depth=1 is supported",
+    ):
+        Simulator([], config).run()
