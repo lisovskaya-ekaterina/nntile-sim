@@ -1,9 +1,9 @@
 """Compare demand-only LRU, demand-only Belady, and chunked Global Planner.
 
 Example:
- python simulator-v2/scripts/benchmark_nntile_graph.py examples/tasks_mbs1.rec \
+ python scripts/benchmark_nntile_graph.py examples/tasks_mbs1.rec \
    --capacities-mib 768 1024 1536 --h2d-gbps 12 --d2h-gbps 12 \
-   --chunk-mib 1 --output simulator-v2/results/global_comparison/benchmark.csv
+   --chunk-mib 1 --output results/global_comparison/benchmark.csv
 
 Times are microseconds; GB/s is decimal GB/s (1000 bytes/microsecond).
 """
