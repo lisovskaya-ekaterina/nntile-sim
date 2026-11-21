@@ -1,82 +1,175 @@
 # NNTile GPU Memory Simulator
 
-Experimental event-driven simulator for GPU memory management
-on NNTile task traces.
+Исследовательский симулятор управления памятью GPU и планирования выполнения вычислительных задач на основе трасс NNTile.
 
-## Features
+Проект предназначен для разработки, проверки и сравнения алгоритмов, определяющих:
 
-- Deterministic topological Compute ordering
-- Independent Compute, H2D and D2H lanes
-- GPU memory capacity and dirty data handling
-- LRU demand-only, Belady demand-only and legacy baseline policies
-- Interactive Plotly visualization
-- Optional chunk-aware demand-only simulation (`fixed-slot` and `exact-size`)
-- Event-driven prefetch depth=1 for non-chunked LRU/Belady
-- Validation and reproducible micrograph/NNTile benchmarks
+- какие данные необходимо разместить в памяти GPU;
+- когда выполнять передачи CPU → GPU (H2D) и GPU → CPU (D2H);
+- какие данные можно удалить из GPU-памяти;
+- когда запускать вычислительные задачи (Compute);
+- как совместить вычисления и передачи данных для сокращения общего времени выполнения.
 
-## Installation
+**Основная цель — минимизация makespan**, то есть времени завершения всего вычислительного графа, при соблюдении ограничений GPU-памяти, зависимостей задач и корректности данных.
 
-From the simulator-v2 directory:
+Симулятор является исследовательской моделью, а не точным воспроизведением StarPU или реального GPU.
 
-    python -m pip install -e .
-    python -m pytest -q
+## 1. Возможности
 
-## Run
+Реализованы:
 
-    mkdir -p results
+- Чтение и анализ трасс вычислительных задач NNTile.
+- Дискретно-событийное моделирование.
+- Три независимые линии выполнения: Compute, H2D и D2H.
+- Ограничение доступного объёма GPU-памяти.
+- Разбиение данных на чанки.
+- Учёт чтения, записи и изменения данных.
+- Моделирование вытеснения и сохранения данных.
+- Базовые стратегии LRU и Belady.
+- Глобальный планировщик вычислений и передач.
+- Сравнение результатов на синтетических и реальных трассах.
+- Поиск точного оптимума для небольших задач.
+- Проверка корректности сформированного расписания.
+- Экспорт событий и интерактивная визуализация Plotly.
 
-    nntile-sim ../examples/tasks_mbs1.rec \
-    --gpu-memory-mib 1349 \
-    --h2d-gbps 12 \
-    --d2h-gbps 12 \
-    --memory-policy lru-demand \
-    --events-csv results/events_lru_1349.csv \
-    --plot-html results/events_lru_1349.html
+## 2. Модель выполнения
 
-    nntile-sim ../examples/tasks_mbs1.rec \
-    --gpu-memory-mib 1349 \
-    --h2d-gbps 12 \
-    --d2h-gbps 12 \
-    --memory-policy belady-demand \
-    --events-csv results/events_belady_1349.csv \
-    --plot-html results/events_belady_1349.html
+Каждая вычислительная задача характеризуется продолжительностью, используемыми данными, режимами доступа и зависимостями.
 
-## Plot an existing CSV
+Симулятор моделирует три линии выполнения:
 
-    nntile-plot results/events_lru_1349.csv --output results/events_lru_1349.html
+| Линия | Назначение |
+|---|---|
+| Compute | Выполнение вычислительных задач |
+| H2D | Передача данных из CPU-памяти в GPU |
+| D2H | Передача данных из GPU-памяти в CPU |
 
-## Prefetch and benchmark status (November 2026)
+Линии могут работать одновременно, если операции не нарушают ограничения модели.
 
-The engine supports `Config(prefetch_depth=1)` for non-chunked `lru-demand` and `belady-demand`. This is currently exercised through Python benchmark scripts, not a documented `nntile-sim` CLI flag. Prefetch overlaps transfers with Compute when scheduling permits; chunked demand-only remains sequential.
+Продолжительность Compute определяется трассой. Продолжительность передачи данных рассчитывается по размеру передаваемых данных и заданной пропускной способности.
 
-From the repository root:
+### Управление GPU-памятью
+
+Данные могут разбиваться на чанки, которые планировщик размещает и освобождает с учётом доступной памяти.
+
+Основные правила:
+
+- Все данные, необходимые задаче, должны находиться в GPU-памяти до запуска Compute.
+- Во время выполнения Compute используемые чанки остаются в памяти.
+- Новая версия записываемых данных появляется после завершения Compute.
+- Чистые данные, имеющие актуальную копию на CPU, могут удаляться без D2H.
+- Изменённые данные при необходимости сохраняются посредством D2H.
+- Чанк нельзя освободить до завершения необходимой передачи D2H.
+- Нельзя использовать устаревшую версию данных.
+
+Подробности модели и алгоритмов приведены в [ALGORITHM.md](ALGORITHM.md).
+
+## 3. Алгоритмы планирования
+
+### LRU demand-only
+
+Загрузка данных выполняется по мере необходимости. При недостатке GPU-памяти для вытеснения выбираются данные по принципу Least Recently Used.
+
+### Belady demand-only
+
+Загрузка также выполняется по мере необходимости, но выбор данных для вытеснения учитывает их последующее использование.
+
+Эти стратегии служат базовыми вариантами для сравнения.
+
+### Глобальный планировщик
+
+Глобальный планировщик рассматривает последовательность вычислений и операции управления памятью как единую задачу планирования.
+
+Он определяет расписание:
+
+- предварительных загрузок H2D;
+- вычислений Compute;
+- сохранений изменённых данных D2H;
+- освобождения GPU-памяти.
+
+В отличие от demand-only стратегий, планировщик стремится заранее подготовить данные и совместить передачи с вычислениями, чтобы сократить простои Compute.
+
+Для улучшения расписания используются механизмы анализа резидентности данных, предварительных загрузок, освобождения памяти и локальных оптимизаций.
+
+Глобальный планировщик является эвристическим алгоритмом. Достижение математического оптимума на произвольной трассе не гарантируется.
+
+Для небольших задач его результат можно сравнить с точным оптимумом.
+
+## 4. Установка
+
+Требуется Python и установленный `pip`.
+
+Из корня репозитория:
 
 ```bash
-python simulator-v2/scripts/benchmark_prefetch.py --output simulator-v2/docs/prefetch_benchmark.csv
-python simulator-v2/scripts/benchmark_nntile_graph.py examples/tasks_mbs1.rec --capacities-mib 1024 1536 2048 --h2d-gbps 12 --d2h-gbps 12 --output simulator-v2/results/milestone6_3_1/tasks_mbs1_benchmark.csv
-python simulator-v2/scripts/benchmark_nntile_graph.py examples/tasks_mbs4.rec --capacities-mib 1024 1536 2048 --h2d-gbps 12 --d2h-gbps 12 --output simulator-v2/results/milestone6_3_1/tasks_mbs4_benchmark.csv
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
 ```
 
-The checked-in results are in `docs/milestone6_3_1/`. Across 24 simulated configurations, prefetch reduced makespan modestly (approximately 0.06–0.38%); for `tasks_mbs1.rec`, H2D traffic increased by roughly 59–71%. These are simulated, not measured GPU timings.
+Установка pytest для запуска тестов:
 
-## Documentation
+```bash
+python -m pip install pytest
+```
 
-- [Simulation model](docs/simulation-model.md)
-- [Visualization](docs/visualization.md)
-- [Development roadmap](docs/development-roadmap.md)
-- [Handle sizes and chunk selection plan](docs/handle-size-chunk-plan.md)
+Проверка:
 
-## Memory policies
+```bash
+python -m pytest -q
+```
 
-- `lru-demand`: demand-only transfers with LRU eviction.
-- `belady-demand`: demand-only transfers with farthest-next-use eviction.
-- `legacy-baseline`: earlier experimental policy with lookahead-one prefetch.
+## 5. Быстрый старт
 
-In demand-only mode, LRU and Belady use the same sequential execution model.
-They differ only in eviction victim selection.
+### Анализ трассы
 
-See [Simulation model](docs/simulation-model.md) for details and
-experimental results.
+```bash
+nntile-trace examples/tasks_mbs1.rec
+```
 
-This is a research prototype, not an exact reproduction of StarPU.
-Generated results/ files are ignored by Git.
+Команда выводит количество вычислительных задач, уникальных данных, группы итераций и режимы доступа.
+
+### Запуск базового симулятора
+
+Пример для LRU:
+
+```bash
+mkdir -p results
+
+nntile-sim examples/tasks_mbs1.rec \
+  --gpu-memory-mib 1349 \
+  --h2d-gbps 12 \
+  --d2h-gbps 12 \
+  --memory-policy lru-demand \
+  --events-csv results/events_lru.csv \
+  --plot-html results/events_lru.html
+```
+
+Для сравнения можно заменить `lru-demand` на `belady-demand`.
+
+### Визуализация существующего расписания
+
+```bash
+nntile-plot results/events_lru.csv \
+  --output results/events_lru.html
+```
+
+Создаётся интерактивный HTML-отчёт с временной диаграммой выполнения операций.
+
+## 6. Сравнение алгоритмов
+
+Для сравнения LRU, Belady и глобального планировщика используется скрипт:
+
+`scripts/benchmark_nntile_graph.py`
+
+Пример:
+
+```bash
+python scripts/benchmark_nntile_graph.py \
+  examples/tasks_mbs1.rec \
+  --capacities-mib 768 1024 1536 \
+  --h2d-gbps 12 \
+  --d2h-gbps 12 \
+  --chunk-mib 1 \
+  --output results/global_comparison/benchmark.csv
+``
