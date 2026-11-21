@@ -1,81 +1,326 @@
-<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NNTile · Планировщик GPU-памяти V12</title>
-<style>*{box-sizing:border-box}body{margin:0;background:#faf9f4;color:#172d38;font:17px/1.55 system-ui,sans-serif}main{max-width:990px;margin:auto;padding:40px clamp(16px,5vw,64px) 60px}header{border-top:6px solid #087d75;padding-top:18px}small{color:#47645e}h1,h2{line-height:1.13;letter-spacing:-.035em}h1{font: bold clamp(38px,6vw,68px)/1.04 Georgia,serif;margin:16px 0}h2{margin:44px 0 14px;font-size:30px}h3{margin:20px 0 4px}p,li{max-width:78ch}li{padding-bottom:7px}table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}td,th{border-bottom:1px solid #c8d2ce;padding:9px 8px;text-align:left}th{background:#e4eeea}.scroll{overflow:auto}svg{width:100%;min-width:590px;font:13px system-ui}figure{margin:14px 0;border-left:3px solid #087d75;padding-left:12px}figcaption{font-weight:700}pre{background:#eaf0ed;overflow:auto;padding:14px;font-size:13px}aside{background:#e4eeea;padding:14px 20px}nav a{color:#075e57;margin-right:14px}section{scroll-margin-top:20px}@media print{main{padding:0}nav{display:none}figure,tr{break-inside:avoid}svg{min-width:0}}</style>
-<main><header><small>NNTile / Исследование планирования · 21 ноября 2026</small><h1>Как планировать память GPU по всему графу</h1><p>Симулятор заранее строит расписание задач и перемещений данных при фиксированном порядке вычислений. Версия V12 учитывает, сколько времени потребуется, чтобы освободить место, и когда вытесненные данные понадобятся снова.</p></header>
-<nav><a href="#model">Модель</a><a href="#algorithm">Алгоритм</a><a href="#example">Пример</a><a href="#results">Результаты</a><a href="#history">Развитие</a><a href="#dashboard">Dashboard</a></nav>
-<section id="model"><h2>Что выбирает планировщик</h2><p>Из трассы известны зависимости, хэндлы, режимы доступа и длительности задач. После выбора допустимого порядка Compute планировщик определяет моменты LOAD (CPU → GPU), UNLOAD (GPU → CPU), ALLOC, DROP и запуска Compute. Цель — минимизировать время конца последней операции, включая пересылки.</p>
-<p>Каждый из трёх каналов выполняет одну операцию за раз. Разные каналы могут работать параллельно. Каждый хэндл разбит на чанки. В режиме fixed-slot последний неполный чанк резервирует целый слот, а время его пересылки определяется фактическим объёмом данных и скоростью канала.</p>
-<p>Память занята с начала LOAD. Все чанки задачи остаются на GPU до конца Compute. Запись создаёт новую версию в конце вычисления. Чистую копию можно удалить сразу после использования. Если грязная версия ещё понадобится для чтения, её сохраняют до DROP. Полная перезапись W допускает удаление прежнего значения. В этой модели конечные результаты специально на CPU не выгружаются.</p></section>
-<section id="algorithm"><h2>Как V12 строит расписание</h2><ol>
-<li><b>Индексирует будущие обращения.</b> Для каждого чанка известны задачи, которые будут его читать или записывать. На временной шкале без простоев начало задачи задаёт желаемый срок готовности её входов.</li>
-<li><b>Планирует размещение.</b> Сроки H2D рассчитываются от потребителей назад. Планировщик учитывает очередь загрузок, занятые слоты, следующее использование и актуальность версии. Для выхода с доступом W достаточно зарезервировать место.</li>
-<li><b>Расставляет операции во времени.</b> Для каждого варианта вычисляет ранние допустимые старты по готовности данных, каналов и памяти. UNLOAD и DROP — отдельные события. Между ними чанк можно читать, когда передача уже завершилась.</li>
-<li><b>Пробует альтернативы, пока есть разрыв с нижней границей.</b> Варианты включают раннюю D2H после записи, удержание данных между чтениями, раннее удаление устаревших версий, другой порядок H2D и предзагрузку следующей задачи. Возможно отложить чтение для окончания D2H. Близ крупных пауз V11 проверяет до 24 вариантов вытеснения выбранного хэндла после конкретной задачи.</li>
-<li><b>Сравнивает время освобождения памяти.</b> V12 дополнительно пробует варианты с предзагрузкой и ранним вытеснением. При дефиците предпочтение получает кандидат, освобождающий достаточно байтов. Затем сравниваются оценка момента освобождения и запас времени для возврата к следующему чтению. При ожидаемом дефиците отдельный вариант раньше выгружает чанки, пропускающие следующую задачу, начиная с меньшего объёма данных.</li>
-<li><b>Выбирает по полному makespan.</b> Оценка кандидата служит для построения плана. Выигрыш проверяется на расписании всех операций с реальным лимитом памяти. При достижении нижней границы дальнейший поиск прекращается.</li></ol>
-<aside><b>Как проверяем оптимальность.</b> Для каждой задачи i складываем время обязательных начальных H2D к её старту и длительность всех Compute от i до конца. Максимум этих сумм и общего времени Compute — нижняя граница. Совпадение с корректным расписанием доказывает оптимальность в модели. При положительном разрыве граница может быть слабой. Для малых графов отдельный решатель перебирает состояния памяти и каналов. При исчерпании бюджета результат остаётся открытым.</aside></section>
-<section id="example"><h2>Два одинаковых слота, два времени освобождения</h2><p>Граф 8049 содержит семь задач. GPU вмещает 8 байт, размер слота — 2 байта. Чанк B содержит 1 байт, D — 2 байта. В 3 мкс заканчивается T1 и требуется место для загрузки A. Скорости H2D и D2H составляют соответственно 1 и 2 байта/мкс.</p>
-<figure><figcaption>V11 · 18 мкс</figcaption><div class="scroll"><svg viewBox="0 0 812 138" role="img" aria-label="Расписание вычислений и передач, микросекунды"><text x="0" y="33">Compute</text><rect x="76" y="18" width="720" height="23" fill="#e9ece8"/><rect x="76.0" y="18" width="120.0" height="23" fill="#254e72" stroke="white"><title>T1 · 0–3 мкс</title></rect><text x="136.0" y="34" text-anchor="middle" fill="white">T1</text><rect x="316.0" y="18" width="160.0" height="23" fill="#254e72" stroke="white"><title>T2 · 6–10 мкс</title></rect><text x="396.0" y="34" text-anchor="middle" fill="white">T2</text><rect x="476.0" y="18" width="80.00000000000007" height="23" fill="#254e72" stroke="white"><title>T3 · 10–12 мкс</title></rect><text x="516.0" y="34" text-anchor="middle" fill="white">T3</text><rect x="556.0" y="18" width="40.0" height="23" fill="#254e72" stroke="white"><title>T4 · 12–13 мкс</title></rect><text x="576.0" y="34" text-anchor="middle" fill="white">T4</text><rect x="596.0000000000001" y="18" width="40.00000000000014" height="23" fill="#254e72" stroke="white"><title>T5 · 13–14 мкс</title></rect><text x="616.0000000000002" y="34" text-anchor="middle" fill="white">T5</text><rect x="636.0000000000002" y="18" width="39.99999999999986" height="23" fill="#254e72" stroke="white"><title>T6 · 14–15 мкс</title></rect><text x="656.0000000000001" y="34" text-anchor="middle" fill="white">T6</text><rect x="676.0000000000001" y="18" width="119.99999999999993" height="23" fill="#254e72" stroke="white"><title>T7 · 15–18 мкс</title></rect><text x="736.0000000000001" y="34" text-anchor="middle" fill="white">T7</text><text x="0" y="65">H2D</text><rect x="76" y="50" width="720" height="23" fill="#e9ece8"/><rect x="236.0" y="50" width="80.0" height="23" fill="#087d75" stroke="white"><title>A · 4–6 мкс</title></rect><text x="276.0" y="66" text-anchor="middle" fill="white">A</text><rect x="476.0" y="50" width="80.0" height="23" fill="#087d75" stroke="white"><title>D · 10–12 мкс</title></rect><text x="516.0" y="66" text-anchor="middle" fill="white">D</text><text x="0" y="97">D2H</text><rect x="76" y="82" width="720" height="23" fill="#e9ece8"/><rect x="196.0" y="82" width="40.0" height="23" fill="#ac541e" stroke="white"><title>D · 3–4 мкс</title></rect><text x="216.0" y="98" text-anchor="middle" fill="white">D</text><text x="76" y="126" text-anchor="middle">0</text><text x="156" y="126" text-anchor="middle">2</text><text x="236" y="126" text-anchor="middle">4</text><text x="316" y="126" text-anchor="middle">6</text><text x="396" y="126" text-anchor="middle">8</text><text x="476" y="126" text-anchor="middle">10</text><text x="556" y="126" text-anchor="middle">12</text><text x="636" y="126" text-anchor="middle">14</text><text x="716" y="126" text-anchor="middle">16</text><text x="796" y="126" text-anchor="middle">18</text></svg></div></figure>
-<figure><figcaption>V12 · 17,5 мкс</figcaption><div class="scroll"><svg viewBox="0 0 812 138" role="img" aria-label="Расписание вычислений и передач, микросекунды"><text x="0" y="33">Compute</text><rect x="76" y="18" width="720" height="23" fill="#e9ece8"/><rect x="76.0" y="18" width="120.0" height="23" fill="#254e72" stroke="white"><title>T1 · 0–3 мкс</title></rect><text x="136.0" y="34" text-anchor="middle" fill="white">T1</text><rect x="296.0" y="18" width="160.0" height="23" fill="#254e72" stroke="white"><title>T2 · 5.5–9.5 мкс</title></rect><text x="376.0" y="34" text-anchor="middle" fill="white">T2</text><rect x="456.0" y="18" width="80.00000000000007" height="23" fill="#254e72" stroke="white"><title>T3 · 9.5–11.5 мкс</title></rect><text x="496.00000000000006" y="34" text-anchor="middle" fill="white">T3</text><rect x="536.0" y="18" width="40.0" height="23" fill="#254e72" stroke="white"><title>T4 · 11.5–12.5 мкс</title></rect><text x="556.0" y="34" text-anchor="middle" fill="white">T4</text><rect x="576.0" y="18" width="40.00000000000014" height="23" fill="#254e72" stroke="white"><title>T5 · 12.5–13.5 мкс</title></rect><text x="596.0000000000001" y="34" text-anchor="middle" fill="white">T5</text><rect x="616.0000000000002" y="18" width="39.99999999999986" height="23" fill="#254e72" stroke="white"><title>T6 · 13.5–14.5 мкс</title></rect><text x="636.0000000000001" y="34" text-anchor="middle" fill="white">T6</text><rect x="656.0000000000001" y="18" width="119.99999999999993" height="23" fill="#254e72" stroke="white"><title>T7 · 14.5–17.5 мкс</title></rect><text x="716.0000000000001" y="34" text-anchor="middle" fill="white">T7</text><text x="0" y="65">H2D</text><rect x="76" y="50" width="720" height="23" fill="#e9ece8"/><rect x="216.0" y="50" width="80.0" height="23" fill="#087d75" stroke="white"><title>A · 3.5–5.5 мкс</title></rect><text x="256.0" y="66" text-anchor="middle" fill="white">A</text><rect x="296.0" y="50" width="40.0" height="23" fill="#087d75" stroke="white"><title>B · 5.5–6.5 мкс</title></rect><text x="316.0" y="66" text-anchor="middle" fill="white">B</text><rect x="456.0" y="50" width="80.0" height="23" fill="#087d75" stroke="white"><title>D · 9.5–11.5 мкс</title></rect><text x="496.0" y="66" text-anchor="middle" fill="white">D</text><text x="0" y="97">D2H</text><rect x="76" y="82" width="720" height="23" fill="#e9ece8"/><rect x="196.0" y="82" width="20.0" height="23" fill="#ac541e" stroke="white"><title>B · 3–3.5 мкс</title></rect><text x="206.0" y="98" text-anchor="middle" fill="white">B</text><rect x="216.0" y="82" width="40.0" height="23" fill="#ac541e" stroke="white"><title>D · 3.5–4.5 мкс</title></rect><text x="236.0" y="98" text-anchor="middle" fill="white">D</text><text x="76" y="126" text-anchor="middle">0</text><text x="156" y="126" text-anchor="middle">2</text><text x="236" y="126" text-anchor="middle">4</text><text x="316" y="126" text-anchor="middle">6</text><text x="396" y="126" text-anchor="middle">8</text><text x="476" y="126" text-anchor="middle">10</text><text x="556" y="126" text-anchor="middle">12</text><text x="636" y="126" text-anchor="middle">14</text><text x="716" y="126" text-anchor="middle">16</text><text x="796" y="126" text-anchor="middle">18</text></svg></div></figure>
-<p>Ось времени — мкс. V11 сначала сохраняет D. V12 сохраняет B за 0,5 мкс и сразу начинает загрузку A. Параллельно D уходит на CPU. Во время T2 возвращается B, а во время T3 — D. Точный перебор подтвердил 17,5 мкс. В этом случае дополнительный трафик сокращает makespan.</p></section>
-<section id="results"><h2>Проверка на трассах обучения</h2><p>Лимит GPU — 768 МиБ, слот — 768 КиБ, скорость каждого канала передачи — 12 000 байт/мкс. Указано симулированное время исполнения графа.</p><div class="scroll"><table><thead><tr><th>Трасса</th><th>Задач</th><th>Makespan, с</th><th>H2D / D2H, МиБ</th><th>Простой Compute</th></tr></thead><tbody><tr><td>tasks_mbs1.rec</td><td>5 484</td><td>247,162272</td><td>12 047,20 / 14 045,00</td><td>0</td></tr><tr><td>tasks_mbs4.rec</td><td>5 452</td><td>1 132,703866</td><td>10 871,40 / 9 638,06</td><td>0</td></tr></tbody></table></div>
-<p>Обе трассы достигли нижней границы ещё в V7. Валидаторы подтвердили допустимость расписаний V12, включая 19 535 и 13 191 выгрузку соответственно.</p>
-<p><b>Малые графы.</b> V12 повторила точный минимум на 450 ранее проверенных графах. На 30 дополнительных графах с несколькими чанками на хэндл (seed 8050–8079) валидатор расписания прошёл во всех случаях. В 28 случаях полный перебор подтвердил оптимальность. В двух сработал лимит поиска 30 000 состояний. Универсального доказательства оптимальности эвристики нет.</p></section>
-<section id="history"><h2>От V3 до V12</h2><table><thead><tr><th>Версия</th><th>Что изменилось</th></tr></thead><tbody>
-<tr><td>V3</td><td>Будущие обращения известны. Вытеснение учитывает дальность следующего использования. Предзагрузка и ранняя выгрузка ориентированы на ближайшую задачу.</td></tr>
-<tr><td>V4–V5</td><td>V4 сдвигает выбранные операции к ранним допустимым стартам. В V5 запас 96 МиБ на этапе выбора вытеснений устранил простой на mbs1 ценой роста трафика.</td></tr>
-<tr><td>V6–V7</td><td>V6 рассчитывает сроки от потребителей с реальным лимитом памяти. V7 переносит выгрузку в свободное окно после последней записи. На mbs4 это устранило оставшиеся 12,665 мс простоя.</td></tr>
-<tr><td>V8–V9</td><td>Появились нижняя граница, диагностика пауз, сравнение политик и независимый точный решатель. V9 отменяет загрузку, если её результат вытеснен до использования.</td></tr>
-<tr><td>V10–V11</td><td>Сравнение удержания с ранним освобождением, в том числе при полной перезаписи. Поиск порядка передач разной длины и вариантов ранней D2H с возможной задержкой чтения.</td></tr>
-<tr><td>V12</td><td>Выбор между вытеснениями с разной длительностью D2H при одинаковом резервировании слота. Учитываются стоимость возврата и перекрытие передач с Compute.</td></tr></tbody></table></section>
-<h2>Как воспроизвести</h2><p>Распакуйте архив V12 в корень проекта nntile-sim. Из корня проекта в активном окружении выполните:</p><pre>export PYTHONPATH=simulator-v2/src
-python -m unittest discover -s simulator-v2/tests -p test_global_v12.py
-python simulator-v2/scripts/validate_global_v12.py
-python simulator-v2/scripts/validate_global_v12.py examples/tasks_mbs4.rec</pre>
-<section id="dashboard">
-<h2>Интерактивная среда экспериментов — NNTile Dashboard</h2>
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NNTile Simulator — текущее состояние проекта</title>
+<style>
+:root{--ink:#19313a;--muted:#587078;--paper:#fbfaf6;--panel:#eef3ef;--line:#d6dfda;--teal:#087d75;--blue:#315c7a;--orange:#b65e2c}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.6 system-ui,-apple-system,Segoe UI,sans-serif}
+main{max-width:1080px;margin:auto;padding:34px clamp(18px,5vw,64px) 72px}
+header{border-top:7px solid var(--teal);padding-top:22px;margin-bottom:26px}
+.eyebrow{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+h1{font:700 clamp(36px,6vw,62px)/1.04 Georgia,serif;letter-spacing:-.035em;margin:12px 0 18px}
+h2{font:700 30px/1.15 Georgia,serif;letter-spacing:-.02em;margin:48px 0 14px}
+h3{font-size:18px;margin:24px 0 6px}
+p{max-width:82ch;margin:10px 0}
+.lead{font-size:19px;max-width:78ch}
+nav{position:sticky;top:0;background:rgba(251,250,246,.95);backdrop-filter:blur(8px);padding:12px 0;border-bottom:1px solid var(--line);z-index:2;display:flex;flex-wrap:wrap;gap:8px 18px}
+nav a{color:#075e57;text-decoration:none;font-size:14px}
+nav a:hover{text-decoration:underline}
+section{scroll-margin-top:76px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:18px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+.card b{display:block;font-size:17px;margin-bottom:5px}
+.card span{color:var(--muted);font-size:14px}
+.callout{background:#e7f0ec;border-left:4px solid var(--teal);padding:14px 18px;margin:18px 0;border-radius:0 8px 8px 0}
+.warning{background:#f5eee7;border-left-color:var(--orange)}
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px}
+th,td{text-align:left;vertical-align:top;padding:10px;border-bottom:1px solid var(--line)}
+th{background:#e9efeb}
+code,pre{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+code{background:#edf1ee;padding:2px 5px;border-radius:4px}
+pre{background:#172d38;color:#f2f6f2;padding:16px;border-radius:9px;overflow:auto;font-size:13px;line-height:1.55}
+.diagram{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;margin:18px 0;overflow-x:auto}
+.diagram svg{display:block;width:100%;min-width:620px;height:auto}
+ul,ol{padding-left:24px}
+li{padding:4px 0;max-width:88ch}
+.small{font-size:13px;color:var(--muted)}
+.metric{font:700 27px/1.1 Georgia,serif;color:var(--teal)}
 
-<p>Для запуска симуляций и исследования расписаний разработана локальная
-интерактивная панель NNTile Dashboard. Она использует существующий
-Python-движок проекта и позволяет запускать алгоритмы на реальных трассах.</p>
+.formula{font:600 17px/1.5 Georgia,serif;text-align:center;background:#edf2ee;border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:12px 0;color:#173b43}
+.formula.large{font-size:22px;padding:16px}
+.mathgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:16px 0}
+.mathcard{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px}
+.mathcard p{font-size:14px}
+footer{border-top:1px solid var(--line);margin-top:56px;padding-top:18px;color:var(--muted);font-size:13px}
+@media print{nav{display:none}main{padding:0 12mm}.card,.diagram,.callout{break-inside:avoid}a{color:inherit}}
+</style>
+</head>
+<body>
+<main>
+<header>
+<div class="eyebrow">NNTile Simulator · технический обзор для команды</div>
+<h1>Глобальное планирование вычислений и GPU-памяти</h1>
+<p class="lead">Текущее состояние исследовательского симулятора: модель выполнения, архитектура планировщика, проверка корректности, экспериментальные инструменты и известные ограничения.</p>
+<p class="small">Срез проекта по состоянию репозитория main на 21 ноября 2026 года</p>
+</header>
 
-<h3>Запуск</h3>
+<nav>
+<a href="#goal">Задача</a><a href="#model">Модель</a><a href="#planner">Планировщик</a>
+<a href="#architecture">Архитектура</a><a href="#verification">Проверка</a>
+<a href="#experiments">Эксперименты</a><a href="#dashboard">Dashboard</a><a href="#limits">Ограничения</a>
+</nav>
+
+<section id="goal">
+<h2>1. Цель проекта</h2>
+<p>По заранее известной трассе NNTile построить корректное расписание вычислительных задач и перемещений данных между CPU и GPU. Планировщик выбирает, какие данные и когда загрузить, сохранить, оставить в GPU или вытеснить, а также когда запускать Compute.</p>
+<div class="grid">
+<div class="card"><b>Главная цель</b><div class="metric">min makespan</div><span>Минимизация времени завершения последней обязательной операции</span></div>
+<div class="card"><b>Жёсткое ограничение</b><div class="metric">GPU capacity</div><span>Занятая и зарезервированная память не превышает заданную ёмкость</span></div>
+<div class="card"><b>Обязательное условие</b><div class="metric">Correctness</div><span>Зависимости, доступность и актуальность версий данных соблюдены</span></div>
+</div>
+<p>Это исследовательская модель, а не точная копия поведения StarPU или реального GPU. Результаты симуляции характеризуют принятую модель и заданные параметры, а не измеренное время исполнения на физическом устройстве.</p>
+</section>
+
+<section id="model">
+<h2>2. Модель выполнения</h2>
+<p>Симулятор моделирует три независимых последовательных ресурса. На каждом ресурсе одновременно выполняется не более одной операции; разные ресурсы могут работать параллельно, если это допускают зависимости, память и правила доступа к данным.</p>
+<div class="diagram">
+<svg viewBox="0 0 900 220" role="img" aria-label="Три независимых ресурса: Compute, H2D и D2H">
+<rect x="10" y="12" width="880" height="196" rx="12" fill="#f5f7f4" stroke="#d6dfda"/>
+<text x="32" y="48" font-size="17" font-weight="700" fill="#19313a">CPU ↔ GPU: три независимые линии выполнения</text>
+<text x="32" y="91" font-size="15" fill="#19313a">Compute</text><rect x="170" y="70" width="660" height="30" rx="5" fill="#e2e9e5"/><rect x="170" y="70" width="210" height="30" rx="5" fill="#315c7a"/><rect x="400" y="70" width="150" height="30" rx="5" fill="#315c7a"/><rect x="570" y="70" width="260" height="30" rx="5" fill="#315c7a"/><text x="275" y="90" text-anchor="middle" font-size="13" fill="white">Compute</text>
+<text x="32" y="141" font-size="15" fill="#19313a">H2D</text><rect x="170" y="120" width="660" height="30" rx="5" fill="#e2e9e5"/><rect x="220" y="120" width="110" height="30" rx="5" fill="#087d75"/><rect x="390" y="120" width="180" height="30" rx="5" fill="#087d75"/><text x="275" y="140" text-anchor="middle" font-size="13" fill="white">CPU → GPU</text>
+<text x="32" y="191" font-size="15" fill="#19313a">D2H</text><rect x="170" y="170" width="660" height="30" rx="5" fill="#e2e9e5"/><rect x="335" y="170" width="125" height="30" rx="5" fill="#b65e2c"/><rect x="600" y="170" width="155" height="30" rx="5" fill="#b65e2c"/><text x="397" y="190" text-anchor="middle" font-size="13" fill="white">GPU → CPU</text>
+</svg>
+<p class="small">Схема иллюстрирует возможность перекрытия операций, а не конкретное расписание или измеренные длительности.</p>
+</div>
+<table>
+<thead><tr><th>Ресурс / событие</th><th>Назначение</th><th>Длительность</th></tr></thead>
+<tbody>
+<tr><td><b>Compute</b></td><td>Выполнение вычислительной задачи на GPU</td><td>Задана трассой</td></tr>
+<tr><td><b>H2D</b></td><td>Копирование данных CPU → GPU</td><td>Размер передаваемых данных / скорость H2D</td></tr>
+<tr><td><b>D2H</b></td><td>Копирование данных GPU → CPU</td><td>Размер передаваемых данных / скорость D2H</td></tr>
+<tr><td><b>DROP</b></td><td>Освобождение GPU-памяти</td><td>Событие управления памятью, не отдельный канал</td></tr>
+</tbody></table>
+
+<h3>Данные, чанки и версии</h3>
+<ul>
+<li>Хэндлы могут разбиваться на чанки. В модели <code>fixed-slot</code> каждый чанк резервирует слот заданной ширины; последний неполный чанк может занимать полный слот.</li>
+<li>Время передачи определяется фактическим размером данных, а резервирование GPU-памяти — размером слота.</li>
+<li>Все чанки, необходимые задаче, должны находиться в GPU на протяжении всего Compute.</li>
+<li>Новая версия записываемого чанка возникает по завершении Compute.</li>
+<li>Чистые данные с актуальной копией на CPU можно вытеснить без D2H.</li>
+<li>Грязные данные, актуальная версия которых понадобится в будущем, нельзя потерять: перед освобождением нужно обеспечить сохранение версии.</li>
+<li>Если для освобождения необходима D2H, она должна завершиться до DROP. Конечные результаты графа не выгружаются на CPU автоматически, если это не требуется моделью последующего использования.</li>
+</ul>
+</section>
+
+<section id="planner">
+<h2>3. Как работает Global Planner</h2>
+<p>Global Planner строит расписание не как последовательность «загрузить данные — выполнить задачу — выгрузить данные», а как совместный план трёх ресурсов и GPU-памяти. Решение о вытеснении влияет на будущие передачи; момент передачи влияет на момент освобождения памяти; доступность памяти влияет на запуск Compute. Поэтому локально выгодное действие не обязательно улучшает общее время выполнения.</p>
+
+<h3>3.1. Формальная постановка</h3>
+<p>Пусть трасса содержит множество задач <code>J = {1, …, n}</code>. Для каждой задачи <code>j</code> известны длительность вычисления <code>p<sub>j</sub></code>, множество используемых чанков <code>R<sub>j</sub></code>, множество читаемых чанков <code>Read<sub>j</sub></code>, множество записываемых чанков <code>Write<sub>j</sub></code> и зависимости от предшествующих задач.</p>
+<p>План содержит операции трёх типов: Compute, H2D и D2H. У каждой операции есть момент начала <code>s</code> и завершения <code>e</code>. Для операции <code>o</code> длительностью <code>d<sub>o</sub></code>:</p>
+<div class="formula">e<sub>o</sub> = s<sub>o</sub> + d<sub>o</sub></div>
+<p>Целевая функция — минимизировать момент завершения последней операции:</p>
+<div class="formula large">min&nbsp; C<sub>max</sub> = min&nbsp; max<sub>o ∈ O</sub> e<sub>o</sub></div>
+<p>Здесь <code>O</code> — все операции, необходимые для выполнения трассы и сохранения тех версий данных, которые будут использоваться в дальнейшем. Это задача совместного планирования вычислений, передачи данных и размещения данных в памяти.</p>
+
+<h3>3.2. Ограничения расписания</h3>
+<div class="mathgrid">
+<div class="mathcard"><b>Один ресурс — одна операция</b><p>На каждой линии операции не пересекаются:</p><div class="formula">[s<sub>i</sub>, e<sub>i</sub>) ∩ [s<sub>k</sub>, e<sub>k</sub>) = ∅</div><p class="small">Отдельно для Compute, H2D и D2H. Между разными линиями перекрытие разрешено.</p></div>
+<div class="mathcard"><b>Зависимости задач</b><p>Если задача <code>j</code> зависит от <code>i</code>, то:</p><div class="formula">s<sub>j</sub> ≥ e<sub>i</sub></div><p class="small">Compute не может нарушать порядок зависимых вычислений.</p></div>
+<div class="mathcard"><b>Готовность входов</b><p>Все необходимые чанки должны быть доступны в GPU к старту Compute:</p><div class="formula">s<sub>j</sub> ≥ e<sub>H2D(c)</sub></div><p class="small">Для каждого входного чанка c, который требуется загрузить.</p></div>
+<div class="mathcard"><b>Ёмкость GPU</b><p>В любой момент сумма резервирования резидентных чанков не выше ёмкости:</p><div class="formula">Σ<sub>c ∈ GPU(t)</sub> q<sub>c</sub> ≤ M</div><p class="small"><code>q<sub>c</sub></code> — зарезервированный объём чанка, <code>M</code> — ёмкость GPU.</p></div>
+</div>
+<p>Дополнительное условие: все чанки задачи закреплены в GPU на всём интервале её Compute. Поэтому нельзя вытеснить вход задачи посередине вычисления, даже если отдельный чанк уже не читается в конкретной инструкции.</p>
+
+<h3>3.3. Размер данных и размер резервирования</h3>
+<p>В текущем режиме <code>fixed-slot</code> хэндл размера <code>S</code> разбивается на чанки ширины <code>B</code>:</p>
+<div class="formula">N = ⌈S / B⌉</div>
+<p>Для каждого чанка <code>c</code> определяется фактический размер <code>s<sub>c</sub></code> и резервируемый размер <code>q<sub>c</sub></code>. В fixed-slot каждый чанк занимает слот ширины <code>B</code>, включая последний неполный чанк:</p>
+<div class="formula">q<sub>c</sub> = B&nbsp;&nbsp;;&nbsp;&nbsp; 0 &lt; s<sub>c</sub> ≤ B</div>
+<p>Время передачи считается по фактическому объёму, а память — по резервируемому:</p>
+<div class="formula">t<sub>H2D,c</sub> = s<sub>c</sub> / v<sub>H2D</sub>&nbsp;&nbsp;;&nbsp;&nbsp; t<sub>D2H,c</sub> = s<sub>c</sub> / v<sub>D2H</sub></div>
+<p>Таким образом, размер чанка влияет сразу на две вещи: внутреннюю фрагментацию GPU-памяти и количество/длительность операций передачи.</p>
+
+<h3>3.4. Жизненный цикл чанка и актуальность версии</h3>
+<p>Для планирования важно различать нахождение чанка в GPU и наличие актуальной копии на CPU. Упрощённо состояние чанка можно описать парой признаков: резидентен ли он в GPU и совпадает ли CPU-копия с последней версией.</p>
+<table><thead><tr><th>Состояние</th><th>Смысл</th><th>Можно ли освободить GPU?</th></tr></thead><tbody>
+<tr><td>Чистый</td><td>GPU-данные совпадают с актуальной копией на CPU</td><td>Да, без D2H</td></tr>
+<tr><td>Грязный, живой</td><td>GPU содержит новую версию, которая понадобится позже; CPU-копия устарела</td><td>Только после сохранения актуальной версии D2H</td></tr>
+<tr><td>Грязный, мёртвый</td><td>Новая версия больше не будет прочитана в оставшейся трассе</td><td>Можно отбросить без D2H, если нет другого обязательства сохранить результат</td></tr>
+<tr><td>Не резидентен</td><td>Чанк отсутствует в GPU</td><td>Для следующего чтения требуется загрузить актуальную версию</td></tr>
+</tbody></table>
+<p>Запись меняет актуальность версии в конце Compute, а не в момент старта задачи. Это важно: пока Compute выполняется, входные чанки закреплены, а новая версия ещё не считается готовой.</p>
+<p>Если грязный чанк понадобится в будущем, сначала должна завершиться D2H, сохраняющая эту версию на CPU. Только после завершения передачи слот можно освободить и повторно использовать. Для чистого чанка обратная передача не нужна.</p>
+
+<h3>3.5. Почему выбор вытеснения — часть глобального расписания</h3>
+<p>При нехватке памяти нужно выбрать набор чанков для освобождения. Ближайшее следующее использование — полезная оценка ценности резидентности. Классическая идея Belady предлагает вытеснять элемент, следующее использование которого дальше всего в будущем. Но в нашей задаче чанки имеют разные размеры, а вытеснение грязного чанка может потребовать D2H.</p>
+<p>Поэтому решение нельзя принимать только по расстоянию до следующего использования. Учитываются:</p>
+<ul>
+<li>когда чанк понадобится снова;</li>
+<li>сколько памяти освободится после его удаления;</li>
+<li>чистый он или грязный;</li>
+<li>понадобится ли D2H и сколько она займёт;</li>
+<li>когда новая версия станет готова к сохранению;</li>
+<li>когда освободившаяся память понадобится следующей задаче;</li>
+<li>можно ли перекрыть D2H с Compute, не блокируя запуск нужных задач.</li>
+</ul>
+<div class="callout"><b>Ключевой принцип:</b> после последнего использования чанк становится кандидатом на вытеснение, но это не означает, что его нужно удалить немедленно. Планировщик выбирает допустимый момент освобождения в контексте будущей потребности в памяти и занятости каналов.</div>
+
+<h3>3.6. Иллюстративный пример</h3>
+<p>Рассмотрим условную GPU-память ёмкостью 2 слота по 1 МиБ. После первой задачи в GPU находятся чанки A и B. Чанк A чистый, а B содержит изменённую версию, которая понадобится следующей задаче. Для следующей задачи нужны B и C.</p>
+<div class="diagram">
+<svg viewBox="0 0 900 270" role="img" aria-label="Иллюстрация вытеснения чистого чанка и загрузки нового">
+<rect x="10" y="10" width="880" height="250" rx="12" fill="#f5f7f4" stroke="#d6dfda"/>
+<text x="30" y="42" font-size="16" font-weight="700" fill="#19313a">Исходное состояние GPU: 2 слота</text>
+<rect x="30" y="58" width="180" height="58" rx="8" fill="#dcebe6" stroke="#087d75"/><text x="120" y="82" text-anchor="middle" font-size="17" font-weight="700" fill="#19313a">A · clean</text><text x="120" y="101" text-anchor="middle" font-size="12" fill="#587078">CPU-копия актуальна</text>
+<rect x="230" y="58" width="180" height="58" rx="8" fill="#f5e7dc" stroke="#b65e2c"/><text x="320" y="82" text-anchor="middle" font-size="17" font-weight="700" fill="#19313a">B · dirty</text><text x="320" y="101" text-anchor="middle" font-size="12" fill="#587078">новая версия нужна далее</text>
+<text x="455" y="92" font-size="14" fill="#19313a">Следующая задача требует B + C</text>
+<path d="M120 125 V157 H320" stroke="#087d75" stroke-width="2" fill="none"/><path d="M312 150 L320 157 L312 164" stroke="#087d75" stroke-width="2" fill="none"/>
+<rect x="30" y="170" width="380" height="62" rx="8" fill="#e8f0ed" stroke="#087d75"/><text x="220" y="194" text-anchor="middle" font-size="15" font-weight="700" fill="#19313a">DROP(A) без D2H</text><text x="220" y="215" text-anchor="middle" font-size="12" fill="#587078">слот освобождается сразу</text>
+<path d="M430 200 H505" stroke="#315c7a" stroke-width="2"/><path d="M497 193 L505 200 L497 207" stroke="#315c7a" stroke-width="2"/>
+<rect x="520" y="170" width="330" height="62" rx="8" fill="#e1ebf2" stroke="#315c7a"/><text x="685" y="194" text-anchor="middle" font-size="15" font-weight="700" fill="#19313a">H2D(C) → Compute(B, C)</text><text x="685" y="215" text-anchor="middle" font-size="12" fill="#587078">B остаётся резидентным</text>
+<text x="30" y="248" font-size="11" fill="#587078">Условная схема для объяснения правила; не результат конкретного прогона.</text>
+</svg>
+</div>
+<p>В этом примере вытеснение A не требует D2H: CPU уже содержит актуальную копию. B нельзя вытеснить до следующего Compute, поскольку он нужен этой задаче. Если бы вместо A требовалось освободить живой dirty-чанк D, пришлось бы сначала выполнить D2H(D), дождаться её завершения и только затем сделать DROP(D). Эта дополнительная передача могла бы задержать H2D(C) или занять канал D2H параллельно с Compute — в зависимости от доступности ресурсов и момента готовности версии.</p>
+
+<h3>3.7. Как текущая реализация ищет расписание</h3>
+<p>Текущий Global Planner — эвристический поиск среди нескольких полных вариантов расписания, а не решение общей задачи целочисленной оптимизации. Публичная точка входа сначала получает результат внутреннего планировщика, затем при необходимости строит дополнительные варианты и сравнивает их по фактическому makespan.</p>
 <ol>
-<li>Откройте терминал в корневом каталоге проекта nntile-sim.</li>
+<li><b>Базовый кандидат.</b> Внутренний планировщик строит начальный вариант через поиск резидентности и упаковку операций по временным линиям.</li>
+<li><b>Оценка нижней границы.</b> Вычисляется нижняя оценка makespan. Если найденное расписание уже достигает её с допуском 1 мкс, дальнейший поиск в этой ветке прекращается.</li>
+<li><b>Преобразование ранних записей.</b> Проверяется вариант, в котором D2H перемещается ближе к моменту, когда версия была создана последней записью и зарезервирована в GPU.</li>
+<li><b>Перебор конфигураций эвристики.</b> Рассматриваются сочетания параметров порядка спроса, освобождения мёртвых данных, пропуска перезаписанных данных, предзагрузки, освобождения свободной памяти и приоритета крупных чанков.</li>
+<li><b>Локальные варианты около простоев.</b> Внутренний оптимизатор может пробовать разделение резидентности отдельных хэндлов около наиболее длинных промежутков между Compute; число таких проб ограничено.</li>
+<li><b>Выбор лучшего.</b> Каждый кандидат проходит упаковку/проверки временных линий. Сохраняется вариант с наименьшим makespan среди рассмотренных.</li>
+</ol>
+<p>В публичной обёртке <code>core/global_planner.py</code> после результата внутреннего оптимизатора дополнительно проверяются четыре сочетания двух переключателей: <code>prefetch_next</code> и <code>spill_idle</code>. Для этих вариантов используется заданный режим demand-order, освобождение dead-чанков, пропуск перезаписанных данных и fastest-release. Сравниваются исходный кандидат и вариант с преобразованием ранних D2H.</p>
+<div class="callout warning"><b>Граница гарантии.</b> Перебираются только предусмотренные кодом варианты эвристик и ограниченное число локальных преобразований. Это не полный перебор всех допустимых расписаний. Поэтому выбранный результат — лучший из проверенных кандидатов, но не обязательно глобальный оптимум.</div>
+
+<h3>3.8. Роль точного решателя</h3>
+<p>Для маленьких фиксированных задач используется независимый событийный поиск <code>exact_small.py</code>. Его состояние включает индекс следующей задачи, маски резидентных и dirty-чанков, остаток Compute и активные операции H2D/D2H с оставшимся временем. Поиск перебирает допустимые переходы между такими состояниями и находит минимальное время завершения в рамках заданной модели.</p>
+<p>Текущие ограничения точного решателя: fixed-slot allocation, не более 10 чанков и 12 задач, а также ограничение бюджета состояний (по умолчанию 200&nbsp;000). Если бюджет исчерпан, решатель сообщает об этом; он не выдаёт эвристическую оценку за точный оптимум.</p>
+<p>Сравнение Global Planner с exact solver на малом графе позволяет измерить разрыв между эвристическим результатом и оптимумом именно для этого графа. Оно не доказывает оптимальность планировщика на больших трассах.</p>
+</section>
+
+<section id="architecture">
+<h2>4. Архитектура текущей реализации</h2>
+<table>
+<thead><tr><th>Компонент</th><th>Ответственность</th></tr></thead>
+<tbody>
+<tr><td><code>core/global_planner.py</code></td><td>Публичная точка входа глобального планировщика.</td></tr>
+<tr><td><code>core/scheduling/planner.py</code></td><td>Сравнение полных вариантов расписания и выбор лучшего кандидата.</td></tr>
+<tr><td><code>core/scheduling/residency.py</code></td><td>Построение плана резидентности и размещения данных.</td></tr>
+<tr><td><code>core/scheduling/residency_search.py</code></td><td>Поиск альтернативных вариантов резидентности.</td></tr>
+<tr><td><code>core/scheduling/optimization.py</code></td><td>Преобразования расписания и поиск улучшений, включая варианты ранней записи на CPU.</td></tr>
+<tr><td><code>core/scheduling/packing.py</code></td><td>Размещение событий на временных линиях с проверкой ограничений.</td></tr>
+<tr><td><code>core/scheduling/bounds.py</code></td><td>Расчёт нижних оценок времени выполнения.</td></tr>
+<tr><td><code>core/scheduling/baseline.py</code></td><td>Базовые стратегии планирования.</td></tr>
+<tr><td><code>core/exact_small.py</code></td><td>Независимый точный поиск для небольших задач в поддерживаемой модели.</td></tr>
+<tr><td><code>core/engine.py</code></td><td>Симуляционный движок, конфигурация и базовые политики.</td></tr>
+</tbody></table>
+<p>Связанные инструменты: <code>scripts/benchmark_nntile_graph.py</code> сравнивает LRU-demand, Belady-demand и Global Planner; <code>scripts/validate_global_planner.py</code> выполняет дополнительную проверку событийного расписания; <code>tests/</code> содержит автоматические тесты.</p>
+<p class="small">Таблица показывает назначение компонентов. Конкретный порядок вызовов и набор эвристик определяются текущим кодом и могут меняться в ходе разработки.</p>
+</section>
+
+<section id="verification">
+<h2>5. Корректность и проверка оптимальности</h2>
+<h3>Проверяемые ограничения</h3>
+<ul>
+<li>GPU-память не превышает заданную ёмкость.</li>
+<li>Каждый канал выполняет не более одной операции одновременно.</li>
+<li>Compute начинается после подготовки необходимых данных и зависимостей.</li>
+<li>Используются актуальные версии данных.</li>
+<li>Необходимая D2H завершается до освобождения соответствующего чанка.</li>
+<li>Все задачи графа завершаются.</li>
+</ul>
+<h3>Два уровня проверки</h3>
+<p><b>Автоматические тесты.</b> Проверяют отдельные правила движка, обработку чанков, конкурентные инварианты, prefetch, интерфейсы и регрессионные сценарии. Для небольших графов результат Global Planner сравнивается с точным решателем.</p>
+<p><b>Независимая проверка расписания.</b> Скрипт-валидатор проверяет временные интервалы, каналы, вместимость памяти, доступность данных и часть условий версионности и безопасного вытеснения. Наличие валидатора не означает, что все возможные ошибки версионности и конкурирующего доступа уже формально исключены.</p>
+<div class="callout warning"><b>Что означает точный оптимум.</b> Совпадение эвристического расписания с результатом exact solver доказывает оптимальность только для конкретной малой задачи и в рамках совпадающих допущений модели. Совпадение на конечном наборе тестов не доказывает глобальную оптимальность эвристики для произвольных трасс.</div>
+<p>В точном поиске используются ограниченные по размеру постановки; при превышении бюджета состояний решатель сообщает об исчерпании бюджета, а не подменяет оптимум оценкой.</p>
+</section>
+
+<section id="experiments">
+<h2>6. Эксперименты и метрики</h2>
+<p>Для оценки расписания используются следующие показатели:</p>
+<table><thead><tr><th>Метрика</th><th>Что показывает</th></tr></thead><tbody>
+<tr><td>Makespan</td><td>Время завершения последней обязательной операции — основная целевая метрика.</td></tr>
+<tr><td>Compute / H2D / D2H busy time</td><td>Суммарное время занятости каждой линии с учётом объединения пересекающихся интервалов.</td></tr>
+<tr><td>Utilization</td><td>Отношение busy time к makespan; диагностическая загрузка ресурса.</td></tr>
+<tr><td>H2D / D2H bytes</td><td>Объём трафика между CPU и GPU.</td></tr>
+<tr><td>Peak GPU memory</td><td>Максимальный объём занятой или зарезервированной GPU-памяти.</td></tr>
+<tr><td>Compute idle time</td><td>Время, когда вычислительная линия не выполняет Compute.</td></tr>
+<tr><td>Gap to lower bound / exact</td><td>Разрыв с доступной нижней оценкой или точным оптимумом, если он вычислим.</td></tr>
+</tbody></table>
+<div class="callout"><b>Важно:</b> 100% загрузка хотя бы одного канала не является обязательным критерием оптимальности. Простои могут быть неизбежны из-за зависимостей задач, доступности данных и ограничений памяти.</div>
+<h3>Воспроизводимое сравнение реальных трасс</h3>
+<p>Для сравнения базовых политик и Global Planner используйте benchmark-скрипт. Пример параметров ниже — конфигурация эксперимента, а не универсальные настройки алгоритма.</p>
+<pre>python scripts/benchmark_nntile_graph.py examples/tasks_mbs1.rec \
+  --capacities-mib 768 1024 1536 \
+  --h2d-gbps 12 \
+  --d2h-gbps 12 \
+  --chunk-mib 0.75 \
+  --output results/global_comparison/benchmark.csv</pre>
+<p>Скрипт формирует CSV с метриками и отдельный CSV с событиями расписаний. Для второй трассы замените <code>tasks_mbs1.rec</code> на <code>tasks_mbs4.rec</code>.</p>
+<p class="small">В этом обзорном документе не приводятся численные результаты makespan для текущего Global Planner: их следует получать повторным запуском benchmark на выбранной конфигурации. Старые числа из предыдущих исследовательских срезов не переносятся сюда как актуальные.</p>
+</section>
+
+<section id="dashboard">
+<h2>7. Интерактивный NNTile Dashboard</h2>
+<p>Dashboard — локальная веб-панель для запуска симуляций и сравнения расписаний. HTML-интерфейс обращается к Python-серверу, который читает трассы, запускает алгоритмы и возвращает метрики и события. Открытие HTML-файла напрямую через GitHub Pages не запускает Python-бэкенд.</p>
+<h3>Запуск локально</h3>
+<ol>
+<li>Откройте терминал в корне репозитория.</li>
 <li>Активируйте виртуальное окружение:</li>
 </ol>
 <pre>source .venv/bin/activate</pre>
-<ol start="3">
-<li>Запустите локальный сервер:</li>
-</ol>
+<ol start="3"><li>Запустите сервер:</li></ol>
 <pre>python dashboard_server.py</pre>
-<ol start="4">
-<li>Откройте панель в браузере:</li>
-</ol>
+<ol start="4"><li>Откройте в браузере:</li></ol>
 <pre>http://127.0.0.1:8765/nntile-dashboard.html</pre>
-
-<p>Терминал с работающим сервером необходимо оставить открытым.
-Для остановки сервера нажмите Ctrl+C.</p>
-
-<h3>Настройка эксперимента</h3>
+<p>Терминал с сервером должен оставаться открытым. Для остановки нажмите <code>Ctrl+C</code>.</p>
+<h3>Возможности панели</h3>
 <ul>
-<li>Выбор входной трассы: tasks_mbs1.rec или tasks_mbs4.rec.</li>
-<li>Независимый выбор алгоритмов LRU, Belady и Global Planner
-с помощью отдельных флажков.</li>
-<li>Настройка объёма GPU-памяти.</li>
-<li>Настройка пропускной способности H2D и D2H.</li>
-<li>Настройка размера чанка Global Planner. Значение по умолчанию — 0,75 МиБ.</li>
-<li>Выбор порядка выполнения Compute.</li>
+<li>Выбор доступной трассы из каталога <code>examples/</code>.</li>
+<li>Независимый выбор алгоритмов LRU, Belady и Global Planner.</li>
+<li>Настройка объёма GPU-памяти, пропускной способности H2D/D2H и порядка Compute.</li>
+<li>Настройка размера чанка Global Planner; значение по умолчанию — 0,75 МиБ.</li>
+<li>Сравнение makespan и других метрик, просмотр временной диаграммы и использования GPU-памяти, изучение событий расписания.</li>
 </ul>
-
-<h3>Результаты и визуализация</h3>
-<ul>
-<li>Сравнение makespan и других показателей симуляции.</li>
-<li>Временная диаграмма Compute, H2D и D2H.</li>
-<li>Визуализация использования GPU-памяти.</li>
-<li>Просмотр отдельных событий расписания.</li>
-</ul>
-
-<p>Все вычисления выполняются локально на Python-движке симулятора.
-Браузер используется для управления экспериментом и отображения результатов.</p>
+<p>Панель предназначена для локальных воспроизводимых экспериментов. Для доступа коллегам через интернет потребуется отдельно развернуть Python-бэкенд; публикации одного HTML-файла недостаточно.</p>
 </section>
-</main></html>
+
+<section id="limits">
+<h2>8. Текущее состояние и ограничения</h2>
+<div class="grid">
+<div class="card"><b>Реализовано</b><span>Движок симуляции; LRU и Belady demand-only; глобальное эвристическое планирование; чанки; модель H2D/D2H и dirty data; benchmark; валидатор; Dashboard.</span></div>
+<div class="card"><b>Проверяется</b><span>Корректность расписаний на тестовых сценариях; сравнение с точным решателем на малых задачах; качество эвристик на реальных трассах.</span></div>
+<div class="card"><b>Не гарантируется</b><span>Глобальная оптимальность для произвольной трассы; полнота формальной проверки всех возможных конфликтов версий и доступа.</span></div>
+</div>
+<ul>
+<li>Global Planner остаётся эвристическим: для произвольных графов оптимальность не гарантируется.</li>
+<li>Точный решатель применим только к небольшим задачам и поддерживаемым допущениям.</li>
+<li>Набор регрессионных сценариев не покрывает все сочетания размеров чанков, зависимостей, версий и конкуренции ресурсов.</li>
+<li>Результаты зависят от конфигурации: объёма GPU-памяти, размеров чанков, скоростей передачи и порядка Compute.</li>
+<li>Симуляция не заменяет измерения на реальном оборудовании.</li>
+</ul>
+<h3>Контрольный запуск тестов</h3>
+<p>На момент подготовки этого обзора в рабочем окружении получен результат:</p>
+<pre>106 passed, 2 xfailed, 19 subtests passed</pre>
+<p class="small">Это результат конкретного контрольного запуска, а не постоянная характеристика проекта. После изменений следует повторять <code>python -m pytest -q</code>.</p>
+<h3>Следующие направления работы</h3>
+<ul>
+<li>Продолжать находить малые контрпримеры, где эвристика не достигает точного оптимума.</li>
+<li>Уточнять причины простоев Compute и разделять ограничения зависимостей, памяти и передачи данных.</li>
+<li>Расширять независимую проверку версий данных и конкурирующих операций.</li>
+<li>Сравнивать Global Planner с точным решателем там, где размер задачи позволяет это сделать.</li>
+<li>Проводить воспроизводимые сравнения на реальных трассах и фиксировать параметры каждого эксперимента.</li>
+</ul>
+</section>
+
+<footer>
+<p><b>NNTile Simulator</b> · Технический обзор текущего состояния проекта.</p>
+<p>Исходный код, инструкции установки и команды экспериментов находятся в README.md и ALGORITHM.md репозитория.</p>
+</footer>
+</main>
+</body>
+</html>
