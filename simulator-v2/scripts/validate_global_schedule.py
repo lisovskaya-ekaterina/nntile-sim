@@ -2,6 +2,7 @@
 
 Usage: PYTHONPATH=simulator-v2/src python /path/to/validate_global_schedule.py
 """
+from bisect import bisect_right
 from collections import defaultdict
 from math import isclose
 
@@ -47,11 +48,11 @@ def validate(tasks, cfg, result):
     jobs_done = set()
     job_starts = {}
     task_index = {t.job_id: i for i, t in enumerate(ordered)}
-    last_read = {}
+    uses = defaultdict(list)
     for i, t in enumerate(ordered):
-        for a in t.accesses:
-            if a.reads_previous_value:
-                last_read[a.handle] = i
+        reads = {a.handle for a in t.accesses if a.reads_previous_value}
+        for h in {a.handle for a in t.accesses}:
+            uses[h].append((i, h in reads))
     last_started_index = -1
     lane_intervals = defaultdict(list)
     actions = []
@@ -114,7 +115,9 @@ def validate(tasks, cfg, result):
             check(key not in in_h2d | in_d2h, f'DROP during transfer at {time}: {key}')
             # Dirty chunks with no future read can be discarded; check future reads below.
             if key in dirty:
-                future_reads = last_read.get(chunks[key].handle, -1) > last_started_index
+                uses_of_handle = uses[chunks[key].handle]
+                nxt = bisect_right(uses_of_handle, (last_started_index, True))
+                future_reads = nxt < len(uses_of_handle) and uses_of_handle[nxt][1]
                 check(not future_reads, f'dirty chunk discarded before future read at {time}: {key}')
             if key in gpu:
                 gpu.remove(key)

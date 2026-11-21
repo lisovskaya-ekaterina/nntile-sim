@@ -68,7 +68,8 @@ def check_versions(tasks, cfg, result):
 
     for key, transfers in d2h_by_chunk.items():
         computes = computes_by_chunk[key]
-        residency = sorted(residency_by_chunk[key])
+        # At the same timestamp the old reservation ends before the new one starts.
+        residency = sorted(residency_by_chunk[key], key=lambda item: (item[0], item[1] != "DROP"))
 
         for transfer in transfers:
             checked += 1
