@@ -131,7 +131,7 @@ def main(argv=None):
     parser.add_argument('--capacities-mib', nargs='+', type=float, required=True)
     parser.add_argument('--h2d-gbps', type=float, required=True)
     parser.add_argument('--d2h-gbps', type=float, required=True)
-    parser.add_argument('--chunk-mib', type=float, default=1.0,
+    parser.add_argument('--chunk-mib', type=float, default=0.75,
                         help='Global Planner chunk size (MiB); default 1')
     parser.add_argument('--compute-order', choices=('topological', 'trace'),
                         default='topological')

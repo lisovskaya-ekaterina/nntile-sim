@@ -1,7 +1,7 @@
 <!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NNTile · Планировщик GPU-памяти V12</title>
 <style>*{box-sizing:border-box}body{margin:0;background:#faf9f4;color:#172d38;font:17px/1.55 system-ui,sans-serif}main{max-width:990px;margin:auto;padding:40px clamp(16px,5vw,64px) 60px}header{border-top:6px solid #087d75;padding-top:18px}small{color:#47645e}h1,h2{line-height:1.13;letter-spacing:-.035em}h1{font: bold clamp(38px,6vw,68px)/1.04 Georgia,serif;margin:16px 0}h2{margin:44px 0 14px;font-size:30px}h3{margin:20px 0 4px}p,li{max-width:78ch}li{padding-bottom:7px}table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}td,th{border-bottom:1px solid #c8d2ce;padding:9px 8px;text-align:left}th{background:#e4eeea}.scroll{overflow:auto}svg{width:100%;min-width:590px;font:13px system-ui}figure{margin:14px 0;border-left:3px solid #087d75;padding-left:12px}figcaption{font-weight:700}pre{background:#eaf0ed;overflow:auto;padding:14px;font-size:13px}aside{background:#e4eeea;padding:14px 20px}nav a{color:#075e57;margin-right:14px}section{scroll-margin-top:20px}@media print{main{padding:0}nav{display:none}figure,tr{break-inside:avoid}svg{min-width:0}}</style>
 <main><header><small>NNTile / Исследование планирования · 21 ноября 2026</small><h1>Как планировать память GPU по всему графу</h1><p>Симулятор заранее строит расписание задач и перемещений данных при фиксированном порядке вычислений. Версия V12 учитывает, сколько времени потребуется, чтобы освободить место, и когда вытесненные данные понадобятся снова.</p></header>
-<nav><a href="#model">Модель</a><a href="#algorithm">Алгоритм</a><a href="#example">Пример</a><a href="#results">Результаты</a><a href="#history">Развитие</a></nav>
+<nav><a href="#model">Модель</a><a href="#algorithm">Алгоритм</a><a href="#example">Пример</a><a href="#results">Результаты</a><a href="#history">Развитие</a><a href="#dashboard">Dashboard</a></nav>
 <section id="model"><h2>Что выбирает планировщик</h2><p>Из трассы известны зависимости, хэндлы, режимы доступа и длительности задач. После выбора допустимого порядка Compute планировщик определяет моменты LOAD (CPU → GPU), UNLOAD (GPU → CPU), ALLOC, DROP и запуска Compute. Цель — минимизировать время конца последней операции, включая пересылки.</p>
 <p>Каждый из трёх каналов выполняет одну операцию за раз. Разные каналы могут работать параллельно. Каждый хэндл разбит на чанки. В режиме fixed-slot последний неполный чанк резервирует целый слот, а время его пересылки определяется фактическим объёмом данных и скоростью канала.</p>
 <p>Память занята с начала LOAD. Все чанки задачи остаются на GPU до конца Compute. Запись создаёт новую версию в конце вычисления. Чистую копию можно удалить сразу после использования. Если грязная версия ещё понадобится для чтения, её сохраняют до DROP. Полная перезапись W допускает удаление прежнего значения. В этой модели конечные результаты специально на CPU не выгружаются.</p></section>
@@ -30,4 +30,52 @@
 <h2>Как воспроизвести</h2><p>Распакуйте архив V12 в корень проекта nntile-sim. Из корня проекта в активном окружении выполните:</p><pre>export PYTHONPATH=simulator-v2/src
 python -m unittest discover -s simulator-v2/tests -p test_global_v12.py
 python simulator-v2/scripts/validate_global_v12.py
-python simulator-v2/scripts/validate_global_v12.py examples/tasks_mbs4.rec</pre></main></html>
+python simulator-v2/scripts/validate_global_v12.py examples/tasks_mbs4.rec</pre>
+<section id="dashboard">
+<h2>Интерактивная среда экспериментов — NNTile Dashboard</h2>
+
+<p>Для запуска симуляций и исследования расписаний разработана локальная
+интерактивная панель NNTile Dashboard. Она использует существующий
+Python-движок проекта и позволяет запускать алгоритмы на реальных трассах.</p>
+
+<h3>Запуск</h3>
+<ol>
+<li>Откройте терминал в корневом каталоге проекта nntile-sim.</li>
+<li>Активируйте виртуальное окружение:</li>
+</ol>
+<pre>source .venv/bin/activate</pre>
+<ol start="3">
+<li>Запустите локальный сервер:</li>
+</ol>
+<pre>python dashboard_server.py</pre>
+<ol start="4">
+<li>Откройте панель в браузере:</li>
+</ol>
+<pre>http://127.0.0.1:8765/nntile-dashboard.html</pre>
+
+<p>Терминал с работающим сервером необходимо оставить открытым.
+Для остановки сервера нажмите Ctrl+C.</p>
+
+<h3>Настройка эксперимента</h3>
+<ul>
+<li>Выбор входной трассы: tasks_mbs1.rec или tasks_mbs4.rec.</li>
+<li>Независимый выбор алгоритмов LRU, Belady и Global Planner
+с помощью отдельных флажков.</li>
+<li>Настройка объёма GPU-памяти.</li>
+<li>Настройка пропускной способности H2D и D2H.</li>
+<li>Настройка размера чанка Global Planner. Значение по умолчанию — 0,75 МиБ.</li>
+<li>Выбор порядка выполнения Compute.</li>
+</ul>
+
+<h3>Результаты и визуализация</h3>
+<ul>
+<li>Сравнение makespan и других показателей симуляции.</li>
+<li>Временная диаграмма Compute, H2D и D2H.</li>
+<li>Визуализация использования GPU-памяти.</li>
+<li>Просмотр отдельных событий расписания.</li>
+</ul>
+
+<p>Все вычисления выполняются локально на Python-движке симулятора.
+Браузер используется для управления экспериментом и отображения результатов.</p>
+</section>
+</main></html>
