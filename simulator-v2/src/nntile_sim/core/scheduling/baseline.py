@@ -4,15 +4,15 @@ from collections import defaultdict, deque
 from math import inf
 from typing import Sequence
 
-from .engine import (
+from ..engine import (
     Config,
     Event,
     SimulationError,
     SimulationResult,
     order_tasks,
 )
-from ..chunks import split_into_chunks
-from ..model import Task
+from ...chunks import split_into_chunks
+from ...model import Task
 
 
 def schedule(tasks: Sequence[Task], config: Config) -> SimulationResult:

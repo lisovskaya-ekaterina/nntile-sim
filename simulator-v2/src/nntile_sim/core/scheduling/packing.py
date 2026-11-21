@@ -3,9 +3,9 @@ from collections import defaultdict
 from dataclasses import replace
 from heapq import heappop, heappush
 
-from ..chunks import split_into_chunks
-from .engine import SimulationResult
-from .global_scheduler_v3 import schedule as schedule_v3
+from ...chunks import split_into_chunks
+from ..engine import SimulationResult
+from .baseline import schedule as schedule_v3
 
 
 def schedule(tasks, config):

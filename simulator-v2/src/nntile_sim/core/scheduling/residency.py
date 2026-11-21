@@ -3,9 +3,9 @@ from bisect import bisect_right
 from collections import defaultdict
 from math import inf
 
-from ..chunks import split_into_chunks
-from .engine import Event, SimulationError, order_tasks
-from .global_scheduler_v4 import pack
+from ...chunks import split_into_chunks
+from ..engine import Event, SimulationError, order_tasks
+from .packing import pack
 
 
 def schedule(tasks, config):

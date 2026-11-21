@@ -2,9 +2,9 @@
 from collections import defaultdict
 from itertools import product
 
-from .engine import order_tasks
-from .global_scheduler_v6 import plan
-from .global_scheduler_v7 import advance_writebacks, schedule as schedule_v7
+from ..engine import order_tasks
+from .residency import plan
+from .writeback import advance_writebacks, schedule as schedule_v7
 
 
 def lower_bound_us(tasks, config):

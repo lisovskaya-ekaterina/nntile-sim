@@ -1,15 +1,15 @@
-"""Independent event-timeline checks for nntile_sim.core.global_scheduler.
-
-Usage: PYTHONPATH=simulator-v2/src python /path/to/validate_global_schedule.py
-"""
+"""Validate global planner events, memory, dependencies, and D2H safety."""
+import argparse
 from bisect import bisect_right
 from collections import defaultdict
 from math import isclose
 
 from nntile_sim.parser import parse_tasks
-from nntile_sim.core.engine import Config, order_tasks
-from nntile_sim.core.global_scheduler import schedule
 from nntile_sim.chunks import split_into_chunks
+from nntile_sim.core.engine import Config, order_tasks
+from nntile_sim.core.exact_small import exact_us
+from nntile_sim.core import global_planner
+from nntile_sim.core.scheduling.bounds import compute_gaps, lower_bound_us
 
 TRACE = 'examples/tasks_mbs1.rec'
 CAPACITY = 768 * 1024 * 1024
@@ -168,21 +168,138 @@ def validate(tasks, cfg, result):
     return errors, peak
 
 
+def check_versions(tasks, cfg, result):
+    sizes = {}
+    for task in tasks:
+        for access in task.accesses:
+            sizes[access.handle] = access.size_bytes
+
+    overrides = dict(cfg.chunk_sizes_by_handle or ())
+    chunks_by_handle = {
+        handle: [
+            f"{c.handle}:{c.index}"
+            for c in split_into_chunks(handle, size, overrides.get(handle, cfg.chunk_size_bytes or size))
+        ]
+        for handle, size in sizes.items()
+    }
+
+    by_id = {str(t.job_id): t for t in tasks}
+
+    # Timeline events:
+    # Compute reads/writes occupy the entire Compute interval.
+    # D2H reads the GPU version throughout its transfer interval.
+    # H2D and ALLOC begin a new GPU residency interval.
+    computes_by_chunk = defaultdict(list)
+    d2h_by_chunk = defaultdict(list)
+    residency_by_chunk = defaultdict(list)
+
+    for event in result.events:
+        if event.lane == "Compute":
+            task = by_id[str(event.job_id)]
+            for access in task.accesses:
+                for key in chunks_by_handle[access.handle]:
+                    computes_by_chunk[key].append((
+                        event.start_us,
+                        event.end_us,
+                        access.writes_value,
+                        event.job_id,
+                    ))
+
+        elif event.lane == "D2H":
+            d2h_by_chunk[event.handle].append(event)
+
+        elif event.lane == "H2D":
+            residency_by_chunk[event.handle].append(
+                (event.start_us, "LOAD")
+            )
+
+        elif event.action == "ALLOC":
+            residency_by_chunk[event.handle].append(
+                (event.start_us, "ALLOC")
+            )
+
+        elif event.action == "DROP":
+            residency_by_chunk[event.handle].append(
+                (event.start_us, "DROP")
+            )
+
+    errors = []
+    checked = 0
+    EPS = 1e-6
+
+    for key, transfers in d2h_by_chunk.items():
+        computes = computes_by_chunk[key]
+        # At the same timestamp the old reservation ends before the new one starts.
+        residency = sorted(residency_by_chunk[key], key=lambda item: (item[0], item[1] != "DROP"))
+
+        for transfer in transfers:
+            checked += 1
+            start = transfer.start_us
+            end = transfer.end_us
+
+            # D2H cannot overlap any Compute using the same chunk.
+            for cstart, cend, writes, job_id in computes:
+                if start < cend - EPS and end > cstart + EPS:
+                    errors.append(
+                        f"{key}: D2H [{start:.3f}, {end:.3f}] "
+                        f"overlaps Compute {job_id} "
+                        f"[{cstart:.3f}, {cend:.3f}]"
+                    )
+                    break
+
+            # D2H must stay inside one GPU residency interval.
+            resident = False
+            for timestamp, action in residency:
+                if timestamp > start + EPS:
+                    break
+                resident = action != "DROP"
+
+            if not resident:
+                errors.append(
+                    f"{key}: D2H starts without GPU residency "
+                    f"at {start:.3f}"
+                )
+
+            for timestamp, action in residency:
+                if start + EPS < timestamp < end - EPS:
+                    errors.append(
+                        f"{key}: {action} during D2H "
+                        f"at {timestamp:.3f}"
+                    )
+                    break
+
+            if len(errors) >= 25:
+                return checked, errors
+
+    return checked, errors
+
+
 def main():
-    tasks = parse_tasks(TRACE)
-    cfg = Config(capacity_bytes=CAPACITY, h2d_bytes_per_us=12000,
-                 d2h_bytes_per_us=12000, chunk_size_bytes=CHUNK,
-                 memory_policy='belady-demand')
-    print('Building schedule...', flush=True)
-    result = schedule(tasks, cfg)
-    print('Validating event timeline...', flush=True)
-    errors, peak = validate(tasks, cfg, result)
-    if errors:
-        print(f'FAIL: {len(errors)} issue(s) shown (maximum 25):')
-        for error in errors:
-            print(' -', error)
-        raise SystemExit(1)
-    print(f'PASS: {len(tasks)} tasks; peak {peak / 1024**2:.2f} MiB; makespan {result.makespan_us / 1e6:.3f} s')
+    parser = argparse.ArgumentParser(description="Validate the chunked global planner")
+    parser.add_argument("trace", nargs="?", default=TRACE)
+    parser.add_argument("--exact", action="store_true", help="exhaustive search on tiny traces")
+    args = parser.parse_args()
+    tasks = parse_tasks(args.trace)
+    cfg = Config(CAPACITY, 12000, 12000, chunk_size_bytes=CHUNK)
+    result = global_planner.schedule(tasks, cfg)
+    bound = lower_bound_us(tasks, cfg)
+    print(f"Lower bound {bound / 1e6:.6f} s, gap {max(0.0, result.makespan_us-bound)/1000:.6f} ms")
+    for job, idle, blockers in compute_gaps(tasks, result):
+        print(f"Compute {job} waited {idle:.3f} us, simultaneous completions: {blockers}")
+    if args.exact:
+        print(f"Exact optimum {float(exact_us(tasks, cfg)):.6f} us")
+    errors, _ = validate(tasks, cfg, result)
+    checked, conflicts = check_versions(tasks, cfg, result)
+    if errors or conflicts:
+        raise RuntimeError((errors + conflicts)[:5])
+    busy = sum(t.duration_us for t in tasks)
+    idle_us = max(0.0, result.makespan_us - busy)
+    print(f'Compute idle {idle_us / 1000:.6f} ms')
+    print(global_planner.__name__, len(tasks), f'{result.makespan_us / 1e6:.6f} s',
+          f'Compute {100 * busy / result.makespan_us:.4f}%',
+          f'peak {result.peak_bytes / 2**20:.2f} MiB',
+          f'H2D/D2H {result.h2d_bytes / 2**20:.2f}/{result.d2h_bytes / 2**20:.2f} MiB',
+          f'{checked} D2H checked, PASS', flush=True)
 
 
 if __name__ == '__main__':

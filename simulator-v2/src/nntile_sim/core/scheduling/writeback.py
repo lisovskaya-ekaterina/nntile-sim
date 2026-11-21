@@ -4,8 +4,8 @@ from collections import defaultdict
 from dataclasses import replace
 from operator import itemgetter
 
-from .global_scheduler_v4 import retime
-from .global_scheduler_v6 import schedule as schedule_v6
+from .packing import retime
+from .residency import schedule as schedule_v6
 
 
 def reserve_window(holes, blocked, release, deadline, duration):

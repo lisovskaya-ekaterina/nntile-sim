@@ -1,10 +1,10 @@
 """Compare residence across uses with earlier release and overlapped transfers."""
 from itertools import product
 
-from .global_scheduler_v6 import plan
-from .global_scheduler_v7 import advance_writebacks
-from .global_scheduler_v8 import lower_bound_us
-from .global_scheduler_v9 import schedule as schedule_v9
+from .residency import plan
+from .writeback import advance_writebacks
+from .bounds import lower_bound_us
+from .prefetch_cleanup import schedule as schedule_v9
 
 
 def schedule(tasks, config):

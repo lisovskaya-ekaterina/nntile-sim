@@ -2,8 +2,8 @@
 from collections import defaultdict
 from dataclasses import replace
 
-from .global_scheduler_v4 import retime
-from .global_scheduler_v8 import lower_bound_us, schedule as schedule_v8
+from .packing import retime
+from .bounds import lower_bound_us, schedule as schedule_v8
 
 
 def schedule(tasks, config):

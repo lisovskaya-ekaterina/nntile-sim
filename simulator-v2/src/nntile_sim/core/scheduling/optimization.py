@@ -2,10 +2,10 @@
 from collections import defaultdict
 from itertools import product
 
-from .global_scheduler_v4 import pack
-from .global_scheduler_v6 import plan
-from .global_scheduler_v8 import lower_bound_us
-from .global_scheduler_v10 import schedule as schedule_v10
+from .packing import pack
+from .residency import plan
+from .bounds import lower_bound_us
+from .residency_search import schedule as schedule_v10
 
 
 def early_writes(tasks, cfg, result):
